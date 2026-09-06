@@ -55,9 +55,8 @@ function saveData(data) {
 
 // ---------- Sessions (persisted to disk so they survive redeploys/restarts) ----------
 
-function requireAuthIfCodeSet(req, res, next) {
+function requireAnyAuth(req, res, next) {
   const data = loadData();
-  if (!data.accessCode) return next(); // no code set yet — open access
   const token = req.cookies.tb_session;
   const adminToken = req.cookies.tb_admin_session;
   if (token && data.viewerSessions.includes(token)) return next();
@@ -128,13 +127,18 @@ async function getEventsForProperty(prop) {
 
 app.post("/api/login", (req, res) => {
   const data = loadData();
-  const { code } = req.body || {};
-  if (!data.accessCode || (code && code.trim().toLowerCase() === data.accessCode.trim().toLowerCase())) {
+  const { code, remember } = req.body || {};
+  if (!data.accessCode) {
+    return res.status(401).json({ ok: false, error: "The cleaner access code hasn't been set up yet. Ask the host to configure it." });
+  }
+  if (code && code.trim().toLowerCase() === data.accessCode.trim().toLowerCase()) {
     const token = crypto.randomBytes(24).toString("hex");
     data.viewerSessions.push(token);
     saveData(data);
-    res.cookie("tb_session", token, { httpOnly: true, sameSite: "lax", maxAge: 1000 * 60 * 60 * 24 * 365 });
-    return res.json({ ok: true, hasCode: !!data.accessCode });
+    const cookieOpts = { httpOnly: true, sameSite: "lax" };
+    if (remember !== false) cookieOpts.maxAge = 1000 * 60 * 60 * 24 * 365;
+    res.cookie("tb_session", token, cookieOpts);
+    return res.json({ ok: true, hasCode: true });
   }
   return res.status(401).json({ ok: false, error: "Incorrect code" });
 });
@@ -143,34 +147,36 @@ app.get("/api/session", (req, res) => {
   const data = loadData();
   const token = req.cookies.tb_session;
   const adminToken = req.cookies.tb_admin_session;
-  const authed = !data.accessCode || Boolean(token && data.viewerSessions.includes(token)) || Boolean(adminToken && data.adminSessions.includes(adminToken));
+  const authed = Boolean(token && data.viewerSessions.includes(token)) || Boolean(adminToken && data.adminSessions.includes(adminToken));
   const isAdmin = Boolean(adminToken && data.adminSessions.includes(adminToken));
   res.json({ authed, hasCode: !!data.accessCode, hasAdminCode: !!data.adminCode, isAdmin });
 });
 
-// Host-only login. First person to set this becomes the host password (bootstrap).
+// Host-only login. The host password must already be set via the ADMIN_CODE
+// environment variable (or previously through the admin panel) — there is no
+// in-app bootstrap, so a stranger reaching this page first can't claim it.
 app.post("/api/admin-login", (req, res) => {
   const data = loadData();
-  const { code } = req.body || {};
-  if (!code || !code.trim()) return res.status(400).json({ ok: false, error: "Enter a password" });
-
+  const { code, remember } = req.body || {};
   if (!data.adminCode) {
-    // Bootstrap: first password entered here becomes the permanent host password.
-    data.adminCode = code.trim();
-  } else if (code.trim().toLowerCase() !== data.adminCode.trim().toLowerCase()) {
+    return res.status(401).json({ ok: false, error: "The host password hasn't been configured yet. Set the ADMIN_CODE environment variable on the server and redeploy." });
+  }
+  if (!code || !code.trim() || code.trim().toLowerCase() !== data.adminCode.trim().toLowerCase()) {
     return res.status(401).json({ ok: false, error: "Incorrect host password" });
   }
 
   const token = crypto.randomBytes(24).toString("hex");
   data.adminSessions.push(token);
   saveData(data);
-  res.cookie("tb_admin_session", token, { httpOnly: true, sameSite: "lax", maxAge: 1000 * 60 * 60 * 24 * 365 });
+  const cookieOpts = { httpOnly: true, sameSite: "lax" };
+  if (remember !== false) cookieOpts.maxAge = 1000 * 60 * 60 * 24 * 365;
+  res.cookie("tb_admin_session", token, cookieOpts);
   res.json({ ok: true });
 });
 
 // ---------- Property + access-code management ----------
 
-app.get("/api/properties", requireAuthIfCodeSet, (req, res) => {
+app.get("/api/properties", requireAnyAuth, (req, res) => {
   const data = loadData();
   // Don't leak the raw iCal URL to the browser — it doesn't need it.
   res.json(data.properties.map(p => ({ id: p.id, name: p.name })));
@@ -206,7 +212,7 @@ app.post("/api/access-code", requireAdmin, (req, res) => {
 
 // ---------- Calendar data ----------
 
-app.get("/api/calendar/:id", requireAuthIfCodeSet, async (req, res) => {
+app.get("/api/calendar/:id", requireAnyAuth, async (req, res) => {
   const data = loadData();
   const prop = data.properties.find(p => p.id === req.params.id);
   if (!prop) return res.status(404).json({ error: "not found" });
@@ -220,12 +226,12 @@ app.get("/api/calendar/:id", requireAuthIfCodeSet, async (req, res) => {
 
 // ---------- Cleaning logs ----------
 
-app.get("/api/logs/:id", requireAuthIfCodeSet, (req, res) => {
+app.get("/api/logs/:id", requireAnyAuth, (req, res) => {
   const data = loadData();
   res.json(data.logs[req.params.id] || {});
 });
 
-app.post("/api/logs/:id", requireAuthIfCodeSet, (req, res) => {
+app.post("/api/logs/:id", requireAnyAuth, (req, res) => {
   const data = loadData();
   const { dateKey, rating, notes, initials, submitted } = req.body || {};
   if (!dateKey) return res.status(400).json({ error: "dateKey required" });
