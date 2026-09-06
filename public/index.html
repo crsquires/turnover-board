@@ -158,8 +158,6 @@
   .tb-existing-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
   .tb-existing-item:first-child { border-top: none; }
   .tb-existing-toggle { width: 100%; background: none; border: none; cursor: pointer; font-family: inherit; color: var(--ink); font-weight: 600; text-align: left; }
-  .tb-property-row:first-child .tb-existing-item { border-top: none; }
-  .tb-property-detail { padding: 4px 0 14px; border-bottom: 1px solid var(--line); }
   .tb-report-title { font-size: 13px; font-weight: 700; margin: 0 0 10px; }
   .tb-report-stats { display: flex; gap: 20px; margin-bottom: 12px; }
   .tb-report-num { display: block; font-size: 20px; font-weight: 800; color: var(--ink); }
@@ -188,7 +186,7 @@
 <script>
 (function () {
   const root = document.getElementById("root");
-  const APP_VERSION = "2026-09-06T19:40:55Z";
+  const APP_VERSION = "2026-09-06T19:44:51Z";
   const updateBanner = document.getElementById("update-banner");
   let updateAvailable = false;
 
@@ -225,7 +223,7 @@
     rememberMe: true,
     installTipOpen: false,
     addPropertyOpen: false,
-    expandedPropertyId: null,
+    propertiesOpen: false,
     monthlyReport: null,
     showPushPrompt: false,
     pushEnabling: false,
@@ -743,40 +741,36 @@
         </div>
 
         <div class="tb-card">
-          <p class="tb-section-title">Properties</p>
-          ${state.properties.length ? `
-            <div class="tb-existing-list">
-              ${state.properties.map(p => {
-                const isExpanded = state.expandedPropertyId === p.id;
-                return `
-                <div class="tb-property-row">
-                  <button type="button" class="tb-existing-item tb-existing-toggle" data-toggle-property="${p.id}">
-                    <span><span class="tb-color-dot" style="background:${p.color}"></span>${escapeHtml(p.name)}</span>
-                    <span class="tb-install-chevron ${isExpanded ? "tb-install-chevron-open" : ""}">›</span>
-                  </button>
-                  ${isExpanded ? `
-                    <div class="tb-property-detail">
-                      <button class="tb-remove-btn" data-remove="${p.id}">Remove property</button>
-                    </div>
-                  ` : ""}
-                </div>
-              `;
-              }).join("")}
-            </div>
-          ` : `<p class="tb-empty-state">No properties yet.</p>`}
-
-          <button type="button" class="tb-add-property-toggle" id="tb-add-property-toggle">
-            ${state.addPropertyOpen ? "− Cancel" : "+ Add property"}
+          <button type="button" class="tb-install-toggle" id="tb-properties-toggle">
+            <span>Properties (${state.properties.length})</span>
+            <span class="tb-install-chevron ${state.propertiesOpen ? "tb-install-chevron-open" : ""}">›</span>
           </button>
 
-          ${state.addPropertyOpen ? `
-            <label class="tb-field-label">Property name</label>
-            <input class="tb-input" id="tb-new-name" placeholder="e.g. Lake House" />
-            <label class="tb-field-label">Airbnb calendar link (iCal export URL)</label>
-            <input class="tb-input" id="tb-new-url" placeholder="https://www.airbnb.com/calendar/ical/..." />
-            <div class="tb-row-actions">
-              <button class="tb-btn tb-btn-primary" id="tb-add-property">Add property</button>
-            </div>
+          ${state.propertiesOpen ? `
+            ${state.properties.length ? `
+              <div class="tb-existing-list">
+                ${state.properties.map(p => `
+                  <div class="tb-existing-item">
+                    <span><span class="tb-color-dot" style="background:${p.color}"></span>${escapeHtml(p.name)}</span>
+                    <button class="tb-remove-btn" data-remove="${p.id}">Remove</button>
+                  </div>
+                `).join("")}
+              </div>
+            ` : `<p class="tb-empty-state">No properties yet.</p>`}
+
+            <button type="button" class="tb-add-property-toggle" id="tb-add-property-toggle">
+              ${state.addPropertyOpen ? "− Cancel" : "+ Add property"}
+            </button>
+
+            ${state.addPropertyOpen ? `
+              <label class="tb-field-label">Property name</label>
+              <input class="tb-input" id="tb-new-name" placeholder="e.g. Lake House" />
+              <label class="tb-field-label">Airbnb calendar link (iCal export URL)</label>
+              <input class="tb-input" id="tb-new-url" placeholder="https://www.airbnb.com/calendar/ical/..." />
+              <div class="tb-row-actions">
+                <button class="tb-btn tb-btn-primary" id="tb-add-property">Add property</button>
+              </div>
+            ` : ""}
           ` : ""}
         </div>
       ` : ""}
@@ -909,11 +903,8 @@
         render();
       }
     });
-    root.querySelectorAll("[data-toggle-property]").forEach(el => el.addEventListener("click", () => {
-      const id = el.getAttribute("data-toggle-property");
-      state.expandedPropertyId = state.expandedPropertyId === id ? null : id;
-      render();
-    }));
+    const propertiesToggle = document.getElementById("tb-properties-toggle");
+    if (propertiesToggle) propertiesToggle.addEventListener("click", () => { state.propertiesOpen = !state.propertiesOpen; render(); });
     const addPropertyToggle = document.getElementById("tb-add-property-toggle");
     if (addPropertyToggle) addPropertyToggle.addEventListener("click", () => { state.addPropertyOpen = !state.addPropertyOpen; render(); });
     const addBtn = document.getElementById("tb-add-property");
@@ -929,7 +920,6 @@
     root.querySelectorAll("[data-remove]").forEach(el => el.addEventListener("click", async () => {
       const id = el.getAttribute("data-remove");
       await api("/properties/" + id, { method: "DELETE" });
-      if (state.expandedPropertyId === id) state.expandedPropertyId = null;
       await refreshProperties();
       if (state.activeId === id) state.activeId = state.properties[0]?.id || null;
       if (state.activeId) await selectProperty(state.activeId); else render();
