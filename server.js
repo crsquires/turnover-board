@@ -16,7 +16,7 @@ app.use(express.static(path.join(__dirname, "public")));
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    const initial = { accessCode: null, properties: [], logs: {} };
+    const initial = { accessCode: null, adminCode: null, properties: [], logs: {} };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
     return initial;
@@ -30,24 +30,35 @@ function saveData(data) {
 
 // ---------- Sessions (in-memory; fine for a single small server) ----------
 
-const sessions = new Set();
+const sessions = new Set();      // viewers (cleaners) — unlocked with the access code
+const adminSessions = new Set(); // host only — unlocked with the host password
 
 function requireAuthIfCodeSet(req, res, next) {
   const data = loadData();
   if (!data.accessCode) return next(); // no code set yet — open access
   const token = req.cookies.tb_session;
+  const adminToken = req.cookies.tb_admin_session;
   if (token && sessions.has(token)) return next();
+  if (adminToken && adminSessions.has(adminToken)) return next(); // host can always view too
   return res.status(401).json({ error: "Not authorized" });
+}
+
+function requireAdmin(req, res, next) {
+  const data = loadData();
+  if (!data.adminCode) return res.status(401).json({ error: "Host password not set yet" });
+  const token = req.cookies.tb_admin_session;
+  if (token && adminSessions.has(token)) return next();
+  return res.status(401).json({ error: "Host login required" });
 }
 
 // ---------- ICS parsing (server-side — no CORS issue here) ----------
 
 function parseICSDate(val) {
   const v = val.trim();
-  const y = parseInt(v.slice(0, 4), 10);
-  const mo = parseInt(v.slice(4, 6), 10) - 1;
-  const da = parseInt(v.slice(6, 8), 10);
-  return new Date(Date.UTC(y, mo, da)).toISOString();
+  const y = v.slice(0, 4);
+  const mo = v.slice(4, 6);
+  const da = v.slice(6, 8);
+  return `${y}-${mo}-${da}`; // plain date string — no timezone, so no shifting later
 }
 
 function parseICS(text) {
@@ -102,8 +113,30 @@ app.post("/api/login", (req, res) => {
 app.get("/api/session", (req, res) => {
   const data = loadData();
   const token = req.cookies.tb_session;
-  const authed = !data.accessCode || Boolean(token && sessions.has(token));
-  res.json({ authed, hasCode: !!data.accessCode });
+  const adminToken = req.cookies.tb_admin_session;
+  const authed = !data.accessCode || Boolean(token && sessions.has(token)) || Boolean(adminToken && adminSessions.has(adminToken));
+  const isAdmin = Boolean(adminToken && adminSessions.has(adminToken));
+  res.json({ authed, hasCode: !!data.accessCode, hasAdminCode: !!data.adminCode, isAdmin });
+});
+
+// Host-only login. First person to set this becomes the host password (bootstrap).
+app.post("/api/admin-login", (req, res) => {
+  const data = loadData();
+  const { code } = req.body || {};
+  if (!code || !code.trim()) return res.status(400).json({ ok: false, error: "Enter a password" });
+
+  if (!data.adminCode) {
+    // Bootstrap: first password entered here becomes the permanent host password.
+    data.adminCode = code.trim();
+    saveData(data);
+  } else if (code.trim().toLowerCase() !== data.adminCode.trim().toLowerCase()) {
+    return res.status(401).json({ ok: false, error: "Incorrect host password" });
+  }
+
+  const token = crypto.randomBytes(24).toString("hex");
+  adminSessions.add(token);
+  res.cookie("tb_admin_session", token, { httpOnly: true, sameSite: "lax", maxAge: 1000 * 60 * 60 * 24 * 365 });
+  res.json({ ok: true });
 });
 
 // ---------- Property + access-code management ----------
@@ -114,7 +147,7 @@ app.get("/api/properties", requireAuthIfCodeSet, (req, res) => {
   res.json(data.properties.map(p => ({ id: p.id, name: p.name })));
 });
 
-app.post("/api/properties", requireAuthIfCodeSet, (req, res) => {
+app.post("/api/properties", requireAdmin, (req, res) => {
   const data = loadData();
   const { name, icalUrl } = req.body || {};
   if (!name || !icalUrl) return res.status(400).json({ error: "name and icalUrl required" });
@@ -125,7 +158,7 @@ app.post("/api/properties", requireAuthIfCodeSet, (req, res) => {
   res.json({ id, name });
 });
 
-app.delete("/api/properties/:id", requireAuthIfCodeSet, (req, res) => {
+app.delete("/api/properties/:id", requireAdmin, (req, res) => {
   const data = loadData();
   data.properties = data.properties.filter(p => p.id !== req.params.id);
   delete data.logs[req.params.id];
@@ -134,7 +167,7 @@ app.delete("/api/properties/:id", requireAuthIfCodeSet, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/access-code", requireAuthIfCodeSet, (req, res) => {
+app.post("/api/access-code", requireAdmin, (req, res) => {
   const data = loadData();
   const { code } = req.body || {};
   data.accessCode = code ? code.trim() : null;
