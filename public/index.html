@@ -115,6 +115,11 @@
   .tb-legend { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--ink-soft); }
   .tb-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .tb-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .tb-color-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+  .tb-day.tb-turnover-multi { background: var(--panel); border: 2px solid var(--turnover); font-weight: 800; }
+  .tb-day-dots { position: absolute; bottom: 3px; left: 0; right: 0; display: flex; justify-content: center; gap: 2px; }
+  .tb-day-dots .tb-color-dot { width: 5px; height: 5px; margin-right: 0; }
+  .tb-legend { flex-wrap: wrap; }
   .tb-section-title { font-size: 14px; font-weight: 700; margin: 0 0 10px; }
   .tb-clean-item { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
   .tb-clean-item:first-child { border-top: none; padding-top: 0; }
@@ -183,7 +188,7 @@
 <script>
 (function () {
   const root = document.getElementById("root");
-  const APP_VERSION = "2026-09-06T19:33:51Z";
+  const APP_VERSION = "2026-09-06T19:40:55Z";
   const updateBanner = document.getElementById("update-banner");
   let updateAvailable = false;
 
@@ -233,14 +238,17 @@
     adminError: "",
     properties: [],
     activeId: null,
-    events: [],
-    logs: {},
+    selectedAllPropertyId: null,
+    eventsByProperty: {},
+    logsByProperty: {},
     calendarStatus: "",
     calendarError: false,
     viewMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     selectedDate: null,
     formError: "",
   };
+
+  const ALL_PROPERTIES = "__all__";
 
   const isHostPage = () => state.roleChoice === "host";
   const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
@@ -369,6 +377,13 @@
 
   function activeProperty() { return state.properties.find(p => p.id === state.activeId) || null; }
 
+  // The property whose day-detail form is currently in play: the selected
+  // property directly, or (in the combined view) whichever one was picked
+  // from that day's list.
+  function formPropertyId() {
+    return state.activeId === ALL_PROPERTIES ? state.selectedAllPropertyId : state.activeId;
+  }
+
   function buildCalendarCells(monthDate, events) {
     const year = monthDate.getFullYear(), month = monthDate.getMonth();
     const firstDow = new Date(year, month, 1).getDay();
@@ -388,20 +403,67 @@
     return cells;
   }
 
+  // Same idea, but combined across every property — each day cell lists which
+  // properties have a checkout that day, so the calendar can show a colored
+  // dot per property and reveal all of them at once when more than one lands
+  // on the same date.
+  function buildCombinedCalendarCells(monthDate) {
+    const year = monthDate.getFullYear(), month = monthDate.getMonth();
+    const firstDow = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(year, month, d);
+      const propsToday = [];
+      for (const prop of state.properties) {
+        const events = state.eventsByProperty[prop.id] || [];
+        for (const ev of events) {
+          if (sameDay(date, parseLocalDate(ev.end))) { propsToday.push(prop); break; }
+        }
+      }
+      cells.push({ date, propsToday });
+    }
+    return cells;
+  }
+
   async function selectProperty(id) {
     state.activeId = id;
     state.selectedDate = null;
+    state.selectedAllPropertyId = null;
     state.calendarStatus = "Loading…";
     state.calendarError = false;
     render();
     try {
       const [cal, logs] = await Promise.all([api("/calendar/" + id), api("/logs/" + id)]);
-      state.events = cal.events;
-      state.logs = logs;
+      state.eventsByProperty[id] = cal.events;
+      state.logsByProperty[id] = logs;
       state.calendarStatus = relativeSync(cal.updatedAt);
       state.calendarError = false;
     } catch (e) {
       state.calendarStatus = "Couldn't load this calendar (" + e.message + ")";
+      state.calendarError = true;
+    }
+    render();
+  }
+
+  async function loadAllProperties() {
+    state.activeId = ALL_PROPERTIES;
+    state.selectedDate = null;
+    state.selectedAllPropertyId = null;
+    state.calendarStatus = "Loading…";
+    state.calendarError = false;
+    render();
+    try {
+      await Promise.all(state.properties.map(async (p) => {
+        const [cal, logs] = await Promise.all([api("/calendar/" + p.id), api("/logs/" + p.id)]);
+        state.eventsByProperty[p.id] = cal.events;
+        state.logsByProperty[p.id] = logs;
+      }));
+      state.calendarStatus = "Updated just now";
+      state.calendarError = false;
+    } catch (e) {
+      state.calendarStatus = "Couldn't load one or more calendars (" + e.message + ")";
       state.calendarError = true;
     }
     render();
@@ -502,14 +564,22 @@
       return;
     }
 
+    const isAllView = state.activeId === ALL_PROPERTIES;
     const prop = activeProperty();
-    const cells = prop ? buildCalendarCells(state.viewMonth, state.events) : [];
+    const cells = isAllView ? buildCombinedCalendarCells(state.viewMonth) : (prop ? buildCalendarCells(state.viewMonth, state.eventsByProperty[state.activeId] || []) : []);
     const today = new Date();
-    const selectedLog = (prop && state.selectedDate) ? (state.logs[state.selectedDate] || { rating: null, notes: "", initials: "", submitted: false }) : null;
+    const fPropId = formPropertyId();
+    const fProp = fPropId ? state.properties.find(p => p.id === fPropId) : null;
+    const selectedLog = (state.selectedDate && fPropId) ? ((state.logsByProperty[fPropId] || {})[state.selectedDate] || { rating: null, notes: "", initials: "", submitted: false }) : null;
     const selectedDateObj = state.selectedDate ? parseLocalDate(state.selectedDate) : null;
     const selectedIsPast = selectedDateObj && selectedDateObj < new Date(new Date().setHours(0,0,0,0));
     const canEditSelected = selectedLog && (!selectedLog.submitted || state.isAdmin);
     const showInstallTip = !isStandalone();
+    // In the combined view, when a day has more than one property's cleaning,
+    // show a picker list first so it's clear which one you're opening.
+    const dayPickerProps = (isAllView && state.selectedDate && !fPropId)
+      ? (cells.find(c => c && dateKey(c.date) === state.selectedDate)?.propsToday || [])
+      : [];
 
     root.innerHTML = `
       <div class="tb-header">
@@ -522,13 +592,14 @@
 
       ${state.properties.length ? `
         <select class="tb-select" id="tb-property-select">
+          <option value="${ALL_PROPERTIES}" ${isAllView ? "selected" : ""}>All Properties</option>
           ${state.properties.map(p => `<option value="${p.id}" ${p.id === state.activeId ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("")}
         </select>
       ` : ""}
 
       ${!state.properties.length ? `
         <div class="tb-card"><p class="tb-empty-state">No properties yet.${state.isAdmin ? " Add one below with its Airbnb export link." : " Ask your host to set one up."}</p></div>
-      ` : prop ? `
+      ` : (prop || isAllView) ? `
         <div class="tb-card">
           <div class="tb-month-row">
             <button class="tb-nav-btn" data-nav="-1">‹</button>
@@ -539,9 +610,21 @@
             ${["S","M","T","W","T","F","S"].map(d => `<div class="tb-dow">${d}</div>`).join("")}
             ${cells.map(c => {
               if (!c) return `<div class="tb-day tb-empty"></div>`;
-              const cls = ["tb-day"];
               const cKey = dateKey(c.date);
-              const cLog = state.logs[cKey];
+              if (isAllView) {
+                const cls = ["tb-day"];
+                if (sameDay(c.date, today)) cls.push("tb-today");
+                if (state.selectedDate === cKey) cls.push("tb-selected");
+                if (!c.propsToday.length) return `<div class="${cls.join(" ")}">${c.date.getDate()}</div>`;
+                const allCleaned = c.propsToday.every(p => ((state.logsByProperty[p.id] || {})[cKey] || {}).submitted);
+                cls.push(allCleaned ? "tb-cleaned" : "tb-turnover-multi");
+                return `<button type="button" class="${cls.join(" ")}" data-day-select="${cKey}">
+                  <span class="tb-day-num">${c.date.getDate()}</span>
+                  <span class="tb-day-dots">${c.propsToday.slice(0, 4).map(p => `<span class="tb-color-dot" style="background:${p.color}"></span>`).join("")}</span>
+                </button>`;
+              }
+              const cls = ["tb-day"];
+              const cLog = (state.logsByProperty[state.activeId] || {})[cKey];
               const isCleaned = cLog && cLog.submitted;
               const isOverdue = c.turnover && !isCleaned && c.date < new Date(new Date().setHours(0,0,0,0));
               if (c.turnover) cls.push("tb-turnover"); else if (c.booked) cls.push("tb-booked");
@@ -559,17 +642,39 @@
             }).join("")}
           </div>
           <div class="tb-legend">
-            <span><span class="tb-dot" style="background:var(--booked)"></span>Guest staying</span>
-            <span><span class="tb-dot" style="background:var(--turnover)"></span>Needs cleaning</span>
-            <span><span class="tb-dot" style="background:var(--cleaned)"></span>Cleaned</span>
+            ${isAllView ? `
+              ${state.properties.map(p => `<span><span class="tb-color-dot" style="background:${p.color}"></span>${escapeHtml(p.name)}</span>`).join("")}
+            ` : `
+              <span><span class="tb-dot" style="background:var(--booked)"></span>Guest staying</span>
+              <span><span class="tb-dot" style="background:var(--turnover)"></span>Needs cleaning</span>
+              <span><span class="tb-dot" style="background:var(--cleaned)"></span>Cleaned</span>
+            `}
           </div>
           <div class="tb-status ${state.calendarError ? "tb-error" : ""}">${state.calendarStatus}</div>
         </div>
 
-        ${selectedLog ? `
+        ${dayPickerProps.length > 1 ? `
+          <div class="tb-card">
+            <p class="tb-section-title">${selectedDateObj.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })} — ${dayPickerProps.length} properties</p>
+            <div class="tb-existing-list">
+              ${dayPickerProps.map(p => {
+                const log = (state.logsByProperty[p.id] || {})[state.selectedDate] || {};
+                return `
+                <button type="button" class="tb-existing-item tb-existing-toggle" data-pick-property="${p.id}">
+                  <span><span class="tb-color-dot" style="background:${p.color}"></span>${escapeHtml(p.name)}</span>
+                  <span class="tb-clean-tag ${log.submitted ? "tb-cleaned-tag" : ""}">${log.submitted ? "Cleaned" : relativeLabel(selectedDateObj)}</span>
+                </button>
+              `;
+              }).join("")}
+            </div>
+          </div>
+        ` : ""}
+
+        ${selectedLog && fProp ? `
           <div class="tb-card" id="day-detail">
             <div class="tb-clean-top-static">
               <div>
+                ${isAllView ? `<div class="tb-clean-when"><span class="tb-color-dot" style="background:${fProp.color}"></span>${escapeHtml(fProp.name)}</div>` : ""}
                 <div class="tb-clean-date">${selectedDateObj.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</div>
                 <div class="tb-clean-when">${selectedDateObj.toLocaleDateString(undefined, { weekday: "long" })}</div>
               </div>
@@ -646,7 +751,7 @@
                 return `
                 <div class="tb-property-row">
                   <button type="button" class="tb-existing-item tb-existing-toggle" data-toggle-property="${p.id}">
-                    <span>${escapeHtml(p.name)}</span>
+                    <span><span class="tb-color-dot" style="background:${p.color}"></span>${escapeHtml(p.name)}</span>
                     <span class="tb-install-chevron ${isExpanded ? "tb-install-chevron-open" : ""}">›</span>
                   </button>
                   ${isExpanded ? `
@@ -703,7 +808,10 @@
     `;
 
     const propertySelect = document.getElementById("tb-property-select");
-    if (propertySelect) propertySelect.addEventListener("change", () => selectProperty(propertySelect.value));
+    if (propertySelect) propertySelect.addEventListener("change", () => {
+      if (propertySelect.value === ALL_PROPERTIES) loadAllProperties();
+      else selectProperty(propertySelect.value);
+    });
     const installToggle = document.getElementById("tb-install-toggle");
     if (installToggle) installToggle.addEventListener("click", () => { state.installTipOpen = !state.installTipOpen; render(); });
     const enablePushBtn = document.getElementById("tb-enable-push");
@@ -722,7 +830,19 @@
     root.querySelectorAll("[data-day-select]").forEach(el => el.addEventListener("click", () => {
       const dKey = el.getAttribute("data-day-select");
       state.selectedDate = state.selectedDate === dKey ? null : dKey;
+      state.selectedAllPropertyId = null;
       state.formError = "";
+      // In the combined view, jump straight to the form if only one property has a cleaning that day.
+      if (state.activeId === ALL_PROPERTIES && state.selectedDate) {
+        const cell = buildCombinedCalendarCells(state.viewMonth).find(c => c && dateKey(c.date) === state.selectedDate);
+        if (cell && cell.propsToday.length === 1) state.selectedAllPropertyId = cell.propsToday[0].id;
+      }
+      render();
+      const target = document.getElementById("day-detail");
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }));
+    root.querySelectorAll("[data-pick-property]").forEach(el => el.addEventListener("click", () => {
+      state.selectedAllPropertyId = el.getAttribute("data-pick-property");
       render();
       const target = document.getElementById("day-detail");
       if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -734,14 +854,17 @@
     }));
     root.querySelectorAll("[data-rate]").forEach(el => el.addEventListener("click", () => {
       const n = parseInt(el.getAttribute("data-rate"), 10);
-      const current = state.logs[state.selectedDate] || {};
-      state.logs[state.selectedDate] = { ...current, rating: current.rating === n ? null : n };
+      const propId = formPropertyId();
+      const current = (state.logsByProperty[propId] || {})[state.selectedDate] || {};
+      if (!state.logsByProperty[propId]) state.logsByProperty[propId] = {};
+      state.logsByProperty[propId][state.selectedDate] = { ...current, rating: current.rating === n ? null : n };
       render();
     }));
     const submitBtn = document.getElementById("tb-submit-cleaning");
     if (submitBtn) submitBtn.addEventListener("click", async () => {
+      const propId = formPropertyId();
       const dKey = state.selectedDate;
-      const current = state.logs[dKey] || {};
+      const current = (state.logsByProperty[propId] || {})[dKey] || {};
       const notes = document.getElementById("tb-day-notes")?.value ?? current.notes ?? "";
       const initials = document.getElementById("tb-day-initials")?.value ?? current.initials ?? "";
 
@@ -755,11 +878,12 @@
       }
 
       try {
-        await api("/logs/" + state.activeId, {
+        await api("/logs/" + propId, {
           method: "POST",
           body: JSON.stringify({ dateKey: dKey, rating: current.rating, notes, initials, submitted: true }),
         });
-        state.logs[dKey] = { ...current, notes, initials, submitted: true };
+        if (!state.logsByProperty[propId]) state.logsByProperty[propId] = {};
+        state.logsByProperty[propId][dKey] = { ...current, notes, initials, submitted: true };
         state.formError = "";
         render();
       } catch (e) {
@@ -769,13 +893,15 @@
     });
     const unmarkBtn = document.getElementById("tb-unmark-cleaning");
     if (unmarkBtn) unmarkBtn.addEventListener("click", async () => {
+      const propId = formPropertyId();
       const dKey = state.selectedDate;
       try {
-        await api("/logs/" + state.activeId, {
+        await api("/logs/" + propId, {
           method: "POST",
           body: JSON.stringify({ dateKey: dKey, submitted: false, rating: null, notes: "", initials: "" }),
         });
-        state.logs[dKey] = { rating: null, notes: "", initials: "", submitted: false };
+        if (!state.logsByProperty[propId]) state.logsByProperty[propId] = {};
+        state.logsByProperty[propId][dKey] = { rating: null, notes: "", initials: "", submitted: false };
         state.formError = "";
         render();
       } catch (e) {
