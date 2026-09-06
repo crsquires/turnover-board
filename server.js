@@ -31,6 +31,7 @@ function loadData() {
   if (!data.adminSessions) data.adminSessions = [];
   if (!data.pushSubscriptions) data.pushSubscriptions = [];
   if (!data.knownCheckouts) data.knownCheckouts = {};
+  if (!data.monthlyReports) data.monthlyReports = {};
   return data;
 }
 
@@ -95,6 +96,56 @@ function formatDateForNotification(dateStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const date = new Date(y, m - 1, d);
   return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+// ---------- Monthly reports ----------
+
+// "2026-08" style key for the calendar month immediately before today.
+function previousMonthKey() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth(); // 0-indexed; subtracting 1 more below gives last month
+  const prev = new Date(y, m - 1, 1);
+  return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+// Builds (or returns the already-built) report for the most recently completed
+// month. Regenerating happens lazily, whenever someone asks for it after the
+// month has rolled over — no cron needed, and it naturally replaces last
+// month's report the first time anyone checks after the 1st.
+function getOrGenerateMonthlyReport(prop, data) {
+  const expectedMonth = previousMonthKey();
+  const existing = data.monthlyReports[prop.id];
+  if (existing && existing.forMonth === expectedMonth) return existing;
+
+  const logs = data.logs[prop.id] || {};
+  const entries = Object.entries(logs).filter(([dateKey, log]) => log.submitted && dateKey.startsWith(expectedMonth));
+
+  const ratings = entries.map(([, log]) => log.rating).filter(r => r !== null && r !== undefined);
+  const avgRating = ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null;
+
+  const notes = entries
+    .filter(([, log]) => log.notes && log.notes.trim())
+    .map(([dateKey, log]) => ({ date: dateKey, initials: log.initials || "", notes: log.notes }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const report = {
+    forMonth: expectedMonth,
+    monthLabel: monthLabel(expectedMonth),
+    generatedAt: new Date().toISOString(),
+    totalCleanings: entries.length,
+    avgRating,
+    notes,
+  };
+
+  data.monthlyReports[prop.id] = report;
+  saveData(data);
+  return report;
 }
 
 
@@ -280,9 +331,17 @@ app.delete("/api/properties/:id", requireAdmin, (req, res) => {
   data.properties = data.properties.filter(p => p.id !== req.params.id);
   delete data.logs[req.params.id];
   delete data.knownCheckouts[req.params.id];
+  delete data.monthlyReports[req.params.id];
   saveData(data);
   icsCache.delete(req.params.id);
   res.json({ ok: true });
+});
+
+app.get("/api/monthly-report/:id", requireAdmin, (req, res) => {
+  const data = loadData();
+  const prop = data.properties.find(p => p.id === req.params.id);
+  if (!prop) return res.status(404).json({ error: "not found" });
+  res.json(getOrGenerateMonthlyReport(prop, data));
 });
 
 // ---------- Push notifications ----------
