@@ -21,7 +21,7 @@ app.get("/host", (req, res) => {
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownCheckouts: {}, monthlyReport: null };
+    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownReservations: {}, monthlyReport: null };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
     return initial;
@@ -30,7 +30,7 @@ function loadData() {
   if (!data.viewerSessions) data.viewerSessions = [];
   if (!data.adminSessions) data.adminSessions = [];
   if (!data.pushSubscriptions) data.pushSubscriptions = [];
-  if (!data.knownCheckouts) data.knownCheckouts = {};
+  if (!data.knownReservations) data.knownReservations = {};
   if (!data.monthlyReport) data.monthlyReport = null;
   return data;
 }
@@ -196,13 +196,19 @@ function parseICS(text) {
   for (const block of blocks) {
     const body = block.split("END:VEVENT")[0];
     const lines = body.split(/\r?\n/);
-    let start = null, end = null;
+    let start = null, end = null, uid = null;
     for (let line of lines) {
       line = line.trim();
       if (line.startsWith("DTSTART")) start = parseICSDate(line.split(":").pop());
       else if (line.startsWith("DTEND")) end = parseICSDate(line.split(":").pop());
+      else if (line.startsWith("UID")) uid = line.split(":").slice(1).join(":").trim();
     }
-    if (start && end) events.push({ start, end });
+    if (start && end) {
+      // Fall back to a start+end key if this feed doesn't provide a UID —
+      // this still works fine, it just can't distinguish "moved" from
+      // "cancelled + new" for that one reservation.
+      events.push({ uid: uid || `${start}_${end}`, start, end });
+    }
   }
   return events;
 }
@@ -222,28 +228,44 @@ async function getEventsForProperty(prop) {
   if (!text.includes("BEGIN:VCALENDAR")) throw new Error("Response wasn't a calendar file");
   const events = parseICS(text);
   icsCache.set(prop.id, { events, fetchedAt: Date.now() });
-  await checkForNewCheckouts(prop, events);
+  await checkForCalendarChanges(prop, events);
   return { events, updatedAt: Date.now() };
 }
 
-// Compares freshly fetched checkout dates against what we've seen before for
-// this property, and pushes a notification for any genuinely new ones. The
-// very first fetch for a property just records the baseline — it doesn't
-// notify for the whole existing calendar.
-async function checkForNewCheckouts(prop, events) {
-  const checkoutDates = [...new Set(events.map(ev => ev.end))].sort();
+// Compares freshly fetched reservations (tracked by UID, so we can tell a
+// moved checkout apart from a cancellation + new booking) against what we've
+// seen before for this property, and pushes a notification for anything that
+// genuinely changed. The very first fetch for a property just records the
+// baseline — it doesn't notify for the whole existing calendar.
+async function checkForCalendarChanges(prop, events) {
   const data = loadData();
-  const known = data.knownCheckouts[prop.id];
+  const known = data.knownReservations[prop.id];
+  const current = {};
+  for (const ev of events) current[ev.uid] = { start: ev.start, end: ev.end };
 
   if (known) {
-    const knownSet = new Set(known);
-    const newDates = checkoutDates.filter(d => !knownSet.has(d));
-    for (const dateStr of newDates) {
-      await sendPushToAll("New cleaning added", `${prop.name} — ${formatDateForNotification(dateStr)}`);
+    const knownUids = Object.keys(known);
+    const currentUids = Object.keys(current);
+
+    for (const uid of currentUids) {
+      if (!known[uid]) {
+        await sendPushToAll("New cleaning added", `${prop.name} — ${formatDateForNotification(current[uid].end)}`);
+      } else if (known[uid].end !== current[uid].end) {
+        await sendPushToAll(
+          "Cleaning date changed",
+          `${prop.name} — moved from ${formatDateForNotification(known[uid].end)} to ${formatDateForNotification(current[uid].end)}`
+        );
+      }
+    }
+
+    for (const uid of knownUids) {
+      if (!current[uid]) {
+        await sendPushToAll("Cleaning cancelled", `${prop.name} — ${formatDateForNotification(known[uid].end)} is no longer needed`);
+      }
     }
   }
 
-  data.knownCheckouts[prop.id] = checkoutDates;
+  data.knownReservations[prop.id] = current;
   saveData(data);
 }
 
@@ -337,7 +359,7 @@ app.delete("/api/properties/:id", requireAdmin, (req, res) => {
   const data = loadData();
   data.properties = data.properties.filter(p => p.id !== req.params.id);
   delete data.logs[req.params.id];
-  delete data.knownCheckouts[req.params.id];
+  delete data.knownReservations[req.params.id];
   saveData(data);
   icsCache.delete(req.params.id);
   res.json({ ok: true });
