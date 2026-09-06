@@ -196,14 +196,20 @@ function parseICS(text) {
   for (const block of blocks) {
     const body = block.split("END:VEVENT")[0];
     const lines = body.split(/\r?\n/);
-    let start = null, end = null, uid = null;
+    let start = null, end = null, uid = null, summary = "";
     for (let line of lines) {
       line = line.trim();
       if (line.startsWith("DTSTART")) start = parseICSDate(line.split(":").pop());
       else if (line.startsWith("DTEND")) end = parseICSDate(line.split(":").pop());
       else if (line.startsWith("UID")) uid = line.split(":").slice(1).join(":").trim();
+      else if (line.startsWith("SUMMARY")) summary = line.split(":").slice(1).join(":").trim();
     }
-    if (start && end) {
+    // Airbnb's calendar feed includes manually blocked-off dates the same way
+    // it includes real bookings — skip those so a block doesn't get treated
+    // as a checkout that needs cleaning.
+    const summaryLower = summary.toLowerCase();
+    const isManualBlock = summaryLower.includes("not available") || summaryLower.includes("blocked") || summaryLower.includes("unavailable");
+    if (start && end && !isManualBlock) {
       // Fall back to a start+end key if this feed doesn't provide a UID —
       // this still works fine, it just can't distinguish "moved" from
       // "cancelled + new" for that one reservation.
