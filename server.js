@@ -338,10 +338,22 @@ app.post("/api/admin-login", (req, res) => {
 
 // ---------- Property + access-code management ----------
 
+// A distinct, readable palette for telling properties apart on the combined
+// calendar. Assigned once at creation time and never changes after that.
+const PROPERTY_COLORS = [
+  "#C9748A", "#5B8FC9", "#C99A3E", "#6FA88B", "#9B7FC9", "#C97F5B", "#4FA8A0", "#B36B9E",
+];
+
 app.get("/api/properties", requireAnyAuth, (req, res) => {
   const data = loadData();
+  // Backfill a color for any property created before this feature existed.
+  let changed = false;
+  data.properties.forEach((p, i) => {
+    if (!p.color) { p.color = PROPERTY_COLORS[i % PROPERTY_COLORS.length]; changed = true; }
+  });
+  if (changed) saveData(data);
   // Don't leak the raw iCal URL to the browser — it doesn't need it.
-  res.json(data.properties.map(p => ({ id: p.id, name: p.name })));
+  res.json(data.properties.map(p => ({ id: p.id, name: p.name, color: p.color })));
 });
 
 app.post("/api/properties", requireAdmin, (req, res) => {
@@ -349,10 +361,11 @@ app.post("/api/properties", requireAdmin, (req, res) => {
   const { name, icalUrl } = req.body || {};
   if (!name || !icalUrl) return res.status(400).json({ error: "name and icalUrl required" });
   const id = crypto.randomBytes(6).toString("hex");
-  data.properties.push({ id, name, icalUrl });
+  const color = PROPERTY_COLORS[data.properties.length % PROPERTY_COLORS.length];
+  data.properties.push({ id, name, icalUrl, color });
   data.logs[id] = data.logs[id] || {};
   saveData(data);
-  res.json({ id, name });
+  res.json({ id, name, color });
 });
 
 app.delete("/api/properties/:id", requireAdmin, (req, res) => {
