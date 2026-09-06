@@ -52,11 +52,12 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235B6A6C' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 12px center;
   }
-  .tb-install-tip { background: var(--turnover-bg); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px; }
-  .tb-install-tip-title { font-weight: 700; margin-bottom: 2px; }
-  .tb-install-tip-steps { margin: 8px 0 0; padding-left: 18px; color: var(--ink-soft); }
+  .tb-install-tip { background: var(--turnover-bg); border-radius: 12px; padding: 4px 14px; margin-top: 4px; font-size: 13px; }
+  .tb-install-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; background: none; border: none; padding: 10px 0; font-family: inherit; font-size: 13.5px; font-weight: 700; color: var(--ink); cursor: pointer; }
+  .tb-install-chevron { display: inline-block; transition: transform 0.15s ease; color: var(--ink-soft); font-size: 16px; }
+  .tb-install-chevron-open { transform: rotate(90deg); }
+  .tb-install-tip-steps { margin: 0 0 10px; padding-left: 18px; color: var(--ink-soft); }
   .tb-install-tip-steps li { margin-bottom: 2px; }
-  .tb-install-dismiss { background: none; border: none; color: var(--ink-soft); font-size: 12px; text-decoration: underline; cursor: pointer; padding: 0; margin-top: 8px; font-family: inherit; }
   .tb-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 14px 0 6px; margin-bottom: 4px; }
   .tb-tab {
     flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; border: 1.5px solid var(--line);
@@ -134,6 +135,11 @@
   .tb-gate-input { width: 100%; max-width: 220px; text-align: center; letter-spacing: 0.1em; font-size: 18px; padding: 12px 10px; border-radius: 10px; border: 1.5px solid var(--line); font-family: inherit; background: var(--panel); color: var(--ink); margin-bottom: 12px; }
   .tb-gate-error { font-size: 12.5px; color: var(--danger); margin-bottom: 10px; min-height: 16px; }
   .tb-gate-btn { padding: 11px 24px; border-radius: 9px; border: none; background: var(--ink); color: var(--paper); font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  .tb-role-row { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 260px; }
+  .tb-role-btn { padding: 14px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--panel); color: var(--ink); font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  .tb-role-btn:active { background: var(--ink); color: var(--paper); }
+  .tb-remember-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); margin-bottom: 12px; justify-content: center; }
+  .tb-role-back { background: none; border: none; color: var(--ink-soft); font-size: 12.5px; text-decoration: underline; cursor: pointer; margin-top: 18px; font-family: inherit; }
 </style>
 </head>
 <body>
@@ -143,15 +149,16 @@
   const root = document.getElementById("root");
 
   let state = {
-    isHostPage: window.location.pathname.replace(/\/$/, "") === "/host",
-    installTipDismissed: false,
+    isHostLink: window.location.pathname.replace(/\/$/, "") === "/host",
+    roleChoice: null, // null | "cleaner" | "host"
+    rememberMe: true,
+    installTipOpen: false,
     authed: false,
     hasCode: false,
     gateError: "",
     isAdmin: false,
     hasAdminCode: false,
     adminError: "",
-    showAdminLogin: false,
     properties: [],
     activeId: null,
     events: [],
@@ -163,6 +170,8 @@
     formError: "",
   };
 
+  const isHostPage = () => state.roleChoice === "host";
+  const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
   function fmtMonth(d) { return d.toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
   function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
   function parseLocalDate(dateStr) {
@@ -268,59 +277,92 @@
   }
 
   function render() {
-    if (state.isHostPage && !state.isAdmin) {
-      root.innerHTML = `
-        <div class="tb-gate">
-          <img src="/logo.png" alt="" style="width:56px;height:56px;border-radius:14px;margin-bottom:14px;" />
-          <p class="tb-gate-title">${state.hasAdminCode ? "Host login" : "Set your host password"}</p>
-          <p class="tb-gate-sub">${state.hasAdminCode ? "Enter your host password to manage properties." : "This is separate from the cleaner access code — set it now."}</p>
-          <input class="tb-gate-input" id="tb-gate-input" type="password" placeholder="Host password" autocomplete="off" />
-          <div class="tb-gate-error">${state.adminError}</div>
-          <button class="tb-gate-btn" id="tb-unlock">${state.hasAdminCode ? "Log in" : "Set password"}</button>
-        </div>
-      `;
-      const input = document.getElementById("tb-gate-input");
-      const tryLogin = async () => {
-        try {
-          const result = await fetch("/api/admin-login", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code: input.value.trim() }),
-          }).then(r => r.json());
-          if (result.ok) { state.isAdmin = true; state.hasAdminCode = true; await init(); }
-          else { state.adminError = result.error || "Something went wrong"; render(); }
-        } catch (e) { state.adminError = "Something went wrong"; render(); }
-      };
-      document.getElementById("tb-unlock").addEventListener("click", tryLogin);
-      input.addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
-      input.focus();
-      return;
-    }
-
-    if (!state.isHostPage && !state.authed) {
+    if (state.roleChoice === null) {
       root.innerHTML = `
         <div class="tb-gate">
           <img src="/logo.png" alt="" style="width:56px;height:56px;border-radius:14px;margin-bottom:14px;" />
           <p class="tb-gate-title">Turnover Board</p>
-          <p class="tb-gate-sub">${state.hasCode ? "Enter the code your host gave you." : "Ask your host for the access code."}</p>
-          <input class="tb-gate-input" id="tb-gate-input" placeholder="Code" autocomplete="off" />
-          <div class="tb-gate-error">${state.gateError}</div>
-          <button class="tb-gate-btn" id="tb-unlock">Continue</button>
+          <p class="tb-gate-sub">Are you a cleaner or the host?</p>
+          <div class="tb-role-row">
+            <button class="tb-role-btn" id="tb-role-cleaner">I'm a Cleaner</button>
+            <button class="tb-role-btn" id="tb-role-host">I'm the Host</button>
+          </div>
+        </div>
+      `;
+      document.getElementById("tb-role-cleaner").addEventListener("click", () => { state.roleChoice = "cleaner"; render(); });
+      document.getElementById("tb-role-host").addEventListener("click", () => { state.roleChoice = "host"; render(); });
+      return;
+    }
+
+    if (isHostPage() && !state.isAdmin) {
+      root.innerHTML = `
+        <div class="tb-gate">
+          <img src="/logo.png" alt="" style="width:56px;height:56px;border-radius:14px;margin-bottom:14px;" />
+          <p class="tb-gate-title">Host login</p>
+          <p class="tb-gate-sub">${state.hasAdminCode ? "Enter your host password to manage properties." : "The host password hasn't been configured yet — set the ADMIN_CODE environment variable on the server and redeploy."}</p>
+          ${state.hasAdminCode ? `
+            <input class="tb-gate-input" id="tb-gate-input" type="password" placeholder="Host password" autocomplete="off" />
+            <label class="tb-remember-row"><input type="checkbox" id="tb-remember" ${state.rememberMe ? "checked" : ""} /> Stay logged in</label>
+            <div class="tb-gate-error">${state.adminError}</div>
+            <button class="tb-gate-btn" id="tb-unlock">Log in</button>
+          ` : ""}
+          <button class="tb-role-back" id="tb-role-back">‹ Not the host? Go back</button>
         </div>
       `;
       const input = document.getElementById("tb-gate-input");
-      const tryLogin = async () => {
-        try {
-          const result = await fetch("/api/login", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code: input.value.trim() }),
-          }).then(r => r.json());
-          if (result.ok) { state.authed = true; await init(); }
-          else { state.gateError = result.error || "Incorrect code"; render(); }
-        } catch (e) { state.gateError = "Something went wrong"; render(); }
-      };
-      document.getElementById("tb-unlock").addEventListener("click", tryLogin);
-      input.addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
-      input.focus();
+      if (input) {
+        const tryLogin = async () => {
+          const rememberEl = document.getElementById("tb-remember");
+          try {
+            const result = await fetch("/api/admin-login", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code: input.value.trim(), remember: rememberEl ? rememberEl.checked : true }),
+            }).then(r => r.json());
+            if (result.ok) { state.isAdmin = true; state.hasAdminCode = true; await init(); }
+            else { state.adminError = result.error || "Something went wrong"; render(); }
+          } catch (e) { state.adminError = "Something went wrong"; render(); }
+        };
+        document.getElementById("tb-unlock").addEventListener("click", tryLogin);
+        input.addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
+        input.focus();
+      }
+      document.getElementById("tb-role-back").addEventListener("click", () => { state.roleChoice = null; state.adminError = ""; render(); });
+      return;
+    }
+
+    if (!isHostPage() && !state.authed) {
+      root.innerHTML = `
+        <div class="tb-gate">
+          <img src="/logo.png" alt="" style="width:56px;height:56px;border-radius:14px;margin-bottom:14px;" />
+          <p class="tb-gate-title">Turnover Board</p>
+          <p class="tb-gate-sub">${state.hasCode ? "Enter the code your host gave you." : "The access code hasn't been configured yet — ask your host."}</p>
+          ${state.hasCode ? `
+            <input class="tb-gate-input" id="tb-gate-input" placeholder="Code" autocomplete="off" />
+            <label class="tb-remember-row"><input type="checkbox" id="tb-remember" ${state.rememberMe ? "checked" : ""} /> Stay logged in</label>
+            <div class="tb-gate-error">${state.gateError}</div>
+            <button class="tb-gate-btn" id="tb-unlock">Continue</button>
+          ` : ""}
+          <button class="tb-role-back" id="tb-role-back">‹ Are you the host? Go back</button>
+        </div>
+      `;
+      const input = document.getElementById("tb-gate-input");
+      if (input) {
+        const tryLogin = async () => {
+          const rememberEl = document.getElementById("tb-remember");
+          try {
+            const result = await fetch("/api/login", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code: input.value.trim(), remember: rememberEl ? rememberEl.checked : true }),
+            }).then(r => r.json());
+            if (result.ok) { state.authed = true; await init(); }
+            else { state.gateError = result.error || "Incorrect code"; render(); }
+          } catch (e) { state.gateError = "Something went wrong"; render(); }
+        };
+        document.getElementById("tb-unlock").addEventListener("click", tryLogin);
+        input.addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
+        input.focus();
+      }
+      document.getElementById("tb-role-back").addEventListener("click", () => { state.roleChoice = null; state.gateError = ""; render(); });
       return;
     }
 
@@ -331,27 +373,16 @@
     const selectedDateObj = state.selectedDate ? parseLocalDate(state.selectedDate) : null;
     const selectedIsPast = selectedDateObj && selectedDateObj < new Date(new Date().setHours(0,0,0,0));
     const canEditSelected = selectedLog && (!selectedLog.submitted || state.isAdmin);
-    const showInstallTip = !state.isHostPage && !state.installTipDismissed;
+    const showInstallTip = !isHostPage() && !isStandalone();
 
     root.innerHTML = `
       <div class="tb-header">
         <img src="/logo.png" alt="" class="tb-logo" />
         <div class="tb-header-text">
-          <p class="tb-title">Turnover Board${state.isHostPage ? " — Host" : ""}</p>
-          <p class="tb-sub">${state.isHostPage ? "Manage properties and codes." : "Tap a checkout day below to log the cleaning."}</p>
+          <p class="tb-title">Turnover Board${isHostPage() ? " — Host" : ""}</p>
+          <p class="tb-sub">${isHostPage() ? "Manage properties and codes." : "Tap a checkout day below to log the cleaning."}</p>
         </div>
       </div>
-
-      ${showInstallTip ? `
-        <div class="tb-install-tip" id="tb-install-tip">
-          <div class="tb-install-tip-title">Add this to your home screen for quick access</div>
-          <ol class="tb-install-tip-steps">
-            <li><strong>iPhone:</strong> tap the Share icon in Safari, then "Add to Home Screen."</li>
-            <li><strong>Android:</strong> tap the ⋮ menu in Chrome, then "Add to Home screen" or "Install app."</li>
-          </ol>
-          <button class="tb-install-dismiss" id="tb-install-dismiss">Got it, hide this</button>
-        </div>
-      ` : ""}
 
       ${state.properties.length ? `
         <select class="tb-select" id="tb-property-select">
@@ -447,7 +478,7 @@
         ` : ""}
       ` : ""}
 
-      ${state.isHostPage && state.isAdmin ? `
+      ${isHostPage() && state.isAdmin ? `
         <div class="tb-card">
           <label class="tb-field-label">Access code for cleaners</label>
           <input class="tb-input" id="tb-code-input" placeholder="e.g. blue42" />
@@ -481,12 +512,27 @@
           ` : ""}
         </div>
       ` : ""}
+
+      ${showInstallTip ? `
+        <div class="tb-install-tip">
+          <button type="button" class="tb-install-toggle" id="tb-install-toggle">
+            <span>Add to your phone</span>
+            <span class="tb-install-chevron ${state.installTipOpen ? "tb-install-chevron-open" : ""}">›</span>
+          </button>
+          ${state.installTipOpen ? `
+            <ol class="tb-install-tip-steps">
+              <li><strong>iPhone:</strong> tap the Share icon in Safari, then "Add to Home Screen."</li>
+              <li><strong>Android:</strong> tap the ⋮ menu in Chrome, then "Add to Home screen" or "Install app."</li>
+            </ol>
+          ` : ""}
+        </div>
+      ` : ""}
     `;
 
     const propertySelect = document.getElementById("tb-property-select");
     if (propertySelect) propertySelect.addEventListener("change", () => selectProperty(propertySelect.value));
-    const installDismiss = document.getElementById("tb-install-dismiss");
-    if (installDismiss) installDismiss.addEventListener("click", () => { state.installTipDismissed = true; render(); });
+    const installToggle = document.getElementById("tb-install-toggle");
+    if (installToggle) installToggle.addEventListener("click", () => { state.installTipOpen = !state.installTipOpen; render(); });
     root.querySelectorAll("[data-day-select]").forEach(el => el.addEventListener("click", () => {
       const dKey = el.getAttribute("data-day-select");
       state.selectedDate = state.selectedDate === dKey ? null : dKey;
@@ -564,7 +610,18 @@
     state.hasCode = session.hasCode;
     state.isAdmin = session.isAdmin;
     state.hasAdminCode = session.hasAdminCode;
-    if (!state.authed) { render(); return; }
+
+    // Auto-resume the right role if there's already a valid session; otherwise
+    // let the /host link skip straight to the host gate, or fall back to the
+    // role-selector screen.
+    if (state.roleChoice === null) {
+      if (state.isAdmin) state.roleChoice = "host";
+      else if (state.authed) state.roleChoice = "cleaner";
+      else if (state.isHostLink) state.roleChoice = "host";
+    }
+
+    const readyToLoad = (isHostPage() && state.isAdmin) || (!isHostPage() && state.authed);
+    if (!readyToLoad) { render(); return; }
     await refreshProperties();
     render();
     if (state.activeId) await selectProperty(state.activeId);
