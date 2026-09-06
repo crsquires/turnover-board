@@ -58,6 +58,7 @@
   .tb-install-chevron-open { transform: rotate(90deg); }
   .tb-install-tip-steps { margin: 0 0 10px; padding-left: 18px; color: var(--ink-soft); }
   .tb-install-tip-steps li { margin-bottom: 2px; }
+  .tb-logout-link { display: block; margin: 18px auto 0; background: none; border: none; color: var(--ink-soft); font-size: 12.5px; text-decoration: underline; cursor: pointer; font-family: inherit; }
   .tb-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 14px 0 6px; margin-bottom: 4px; }
   .tb-tab {
     flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; border: 1.5px solid var(--line);
@@ -129,6 +130,7 @@
   .tb-existing-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
   .tb-existing-item:first-child { border-top: none; }
   .tb-remove-btn { background: none; border: none; color: var(--danger); font-size: 12px; font-weight: 700; cursor: pointer; }
+  .tb-add-property-toggle { width: 100%; padding: 10px; border-radius: 9px; border: 1.5px dashed var(--line); background: var(--paper); color: var(--ink); font-size: 13.5px; font-weight: 700; cursor: pointer; font-family: inherit; margin-top: 12px; }
   .tb-gate { min-height: 70vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
   .tb-gate-title { font-size: 19px; font-weight: 800; margin: 0 0 6px; }
   .tb-gate-sub { font-size: 13.5px; color: var(--ink-soft); margin: 0 0 18px; }
@@ -153,6 +155,7 @@
     roleChoice: null, // null | "cleaner" | "host"
     rememberMe: true,
     installTipOpen: false,
+    addPropertyOpen: false,
     authed: false,
     hasCode: false,
     gateError: "",
@@ -213,7 +216,7 @@
     });
     if (res.status === 401) {
       const body = await res.json().catch(() => ({}));
-      if (path.startsWith("/properties") || path.startsWith("/access-code") || path.startsWith("/admin-code")) {
+      if (path.startsWith("/properties")) {
         // Admin-only action rejected — host needs to log in again, viewer stays logged in.
         state.isAdmin = false;
         state.adminError = body.error || "Host login required";
@@ -373,7 +376,7 @@
     const selectedDateObj = state.selectedDate ? parseLocalDate(state.selectedDate) : null;
     const selectedIsPast = selectedDateObj && selectedDateObj < new Date(new Date().setHours(0,0,0,0));
     const canEditSelected = selectedLog && (!selectedLog.submitted || state.isAdmin);
-    const showInstallTip = !isHostPage() && !isStandalone();
+    const showInstallTip = !isStandalone();
 
     root.innerHTML = `
       <div class="tb-header">
@@ -472,6 +475,7 @@
               <div class="tb-gate-error">${state.formError}</div>
               <div class="tb-row-actions">
                 <button class="tb-btn tb-btn-primary" id="tb-submit-cleaning">${selectedLog.submitted ? "Save changes" : "Submit cleaning"}</button>
+                ${selectedLog.submitted && state.isAdmin ? `<button class="tb-btn tb-btn-secondary" id="tb-unmark-cleaning">Unmark as cleaned</button>` : ""}
               </div>
             `}
           </div>
@@ -480,26 +484,7 @@
 
       ${isHostPage() && state.isAdmin ? `
         <div class="tb-card">
-          <label class="tb-field-label">Access code for cleaners</label>
-          <input class="tb-input" id="tb-code-input" placeholder="e.g. blue42" />
-          <div class="tb-row-actions">
-            <button class="tb-btn tb-btn-primary" id="tb-save-code">Save code</button>
-          </div>
-
-          <label class="tb-field-label">Change host password</label>
-          <input class="tb-input" id="tb-admin-code-input" type="password" placeholder="New host password" />
-          <div class="tb-row-actions">
-            <button class="tb-btn tb-btn-primary" id="tb-save-admin-code">Update password</button>
-          </div>
-
-          <label class="tb-field-label">Property name</label>
-          <input class="tb-input" id="tb-new-name" placeholder="e.g. Lake House" />
-          <label class="tb-field-label">Airbnb calendar link (iCal export URL)</label>
-          <input class="tb-input" id="tb-new-url" placeholder="https://www.airbnb.com/calendar/ical/..." />
-          <div class="tb-row-actions">
-            <button class="tb-btn tb-btn-primary" id="tb-add-property">Add property</button>
-          </div>
-
+          <p class="tb-section-title">Properties</p>
           ${state.properties.length ? `
             <div class="tb-existing-list">
               ${state.properties.map(p => `
@@ -508,6 +493,20 @@
                   <button class="tb-remove-btn" data-remove="${p.id}">Remove</button>
                 </div>
               `).join("")}
+            </div>
+          ` : `<p class="tb-empty-state">No properties yet.</p>`}
+
+          <button type="button" class="tb-add-property-toggle" id="tb-add-property-toggle">
+            ${state.addPropertyOpen ? "− Cancel" : "+ Add property"}
+          </button>
+
+          ${state.addPropertyOpen ? `
+            <label class="tb-field-label">Property name</label>
+            <input class="tb-input" id="tb-new-name" placeholder="e.g. Lake House" />
+            <label class="tb-field-label">Airbnb calendar link (iCal export URL)</label>
+            <input class="tb-input" id="tb-new-url" placeholder="https://www.airbnb.com/calendar/ical/..." />
+            <div class="tb-row-actions">
+              <button class="tb-btn tb-btn-primary" id="tb-add-property">Add property</button>
             </div>
           ` : ""}
         </div>
@@ -527,12 +526,25 @@
           ` : ""}
         </div>
       ` : ""}
+
+      <button class="tb-logout-link" id="tb-logout-link">Log out</button>
     `;
 
     const propertySelect = document.getElementById("tb-property-select");
     if (propertySelect) propertySelect.addEventListener("change", () => selectProperty(propertySelect.value));
     const installToggle = document.getElementById("tb-install-toggle");
     if (installToggle) installToggle.addEventListener("click", () => { state.installTipOpen = !state.installTipOpen; render(); });
+    const logoutLink = document.getElementById("tb-logout-link");
+    if (logoutLink) logoutLink.addEventListener("click", async () => {
+      await fetch("/api/logout", { method: "POST" });
+      state.authed = false;
+      state.isAdmin = false;
+      state.roleChoice = null;
+      state.properties = [];
+      state.activeId = null;
+      state.selectedDate = null;
+      render();
+    });
     root.querySelectorAll("[data-day-select]").forEach(el => el.addEventListener("click", () => {
       const dKey = el.getAttribute("data-day-select");
       state.selectedDate = state.selectedDate === dKey ? null : dKey;
@@ -571,27 +583,32 @@
         render();
       }
     });
-    const saveCodeBtn = document.getElementById("tb-save-code");
-    if (saveCodeBtn) saveCodeBtn.addEventListener("click", async () => {
-      const val = document.getElementById("tb-code-input").value.trim();
-      await api("/access-code", { method: "POST", body: JSON.stringify({ code: val || null }) });
-      state.hasCode = !!val;
-      render();
+    const unmarkBtn = document.getElementById("tb-unmark-cleaning");
+    if (unmarkBtn) unmarkBtn.addEventListener("click", async () => {
+      const dKey = state.selectedDate;
+      const current = state.logs[dKey] || {};
+      try {
+        await api("/logs/" + state.activeId, {
+          method: "POST",
+          body: JSON.stringify({ dateKey: dKey, submitted: false }),
+        });
+        state.logs[dKey] = { ...current, submitted: false };
+        state.formError = "";
+        render();
+      } catch (e) {
+        state.formError = e.message || "Couldn't undo — try again.";
+        render();
+      }
     });
-    const saveAdminCodeBtn = document.getElementById("tb-save-admin-code");
-    if (saveAdminCodeBtn) saveAdminCodeBtn.addEventListener("click", async () => {
-      const val = document.getElementById("tb-admin-code-input").value.trim();
-      if (!val) return;
-      await api("/admin-code", { method: "POST", body: JSON.stringify({ code: val }) });
-      document.getElementById("tb-admin-code-input").value = "";
-      render();
-    });
+    const addPropertyToggle = document.getElementById("tb-add-property-toggle");
+    if (addPropertyToggle) addPropertyToggle.addEventListener("click", () => { state.addPropertyOpen = !state.addPropertyOpen; render(); });
     const addBtn = document.getElementById("tb-add-property");
     if (addBtn) addBtn.addEventListener("click", async () => {
       const name = document.getElementById("tb-new-name").value.trim();
       const url = document.getElementById("tb-new-url").value.trim();
       if (!name || !url) return;
       const created = await api("/properties", { method: "POST", body: JSON.stringify({ name, icalUrl: url }) });
+      state.addPropertyOpen = false;
       await refreshProperties();
       await selectProperty(created.id);
     });
