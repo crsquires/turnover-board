@@ -51,6 +51,11 @@ function requireAdmin(req, res, next) {
   return res.status(401).json({ error: "Host login required" });
 }
 
+function isRequestAdmin(req) {
+  const token = req.cookies.tb_admin_session;
+  return Boolean(token && adminSessions.has(token));
+}
+
 // ---------- ICS parsing (server-side — no CORS issue here) ----------
 
 function parseICSDate(val) {
@@ -198,15 +203,30 @@ app.get("/api/logs/:id", requireAuthIfCodeSet, (req, res) => {
 
 app.post("/api/logs/:id", requireAuthIfCodeSet, (req, res) => {
   const data = loadData();
-  const { dateKey, done, rating, notes } = req.body || {};
+  const { dateKey, rating, notes, initials, submitted } = req.body || {};
   if (!dateKey) return res.status(400).json({ error: "dateKey required" });
   if (!data.logs[req.params.id]) data.logs[req.params.id] = {};
-  const current = data.logs[req.params.id][dateKey] || { done: false, rating: null, notes: "" };
+  const current = data.logs[req.params.id][dateKey] || { rating: null, notes: "", initials: "", submitted: false };
+
+  if (current.submitted && !isRequestAdmin(req)) {
+    return res.status(403).json({ error: "This cleaning has already been submitted — ask your host to make changes." });
+  }
+
   data.logs[req.params.id][dateKey] = {
-    done: done !== undefined ? done : current.done,
     rating: rating !== undefined ? rating : current.rating,
     notes: notes !== undefined ? notes : current.notes,
+    initials: initials !== undefined ? initials : current.initials,
+    submitted: submitted !== undefined ? submitted : current.submitted,
   };
+  saveData(data);
+  res.json({ ok: true });
+});
+
+app.post("/api/admin-code", requireAdmin, (req, res) => {
+  const data = loadData();
+  const { code } = req.body || {};
+  if (!code || !code.trim()) return res.status(400).json({ error: "New password required" });
+  data.adminCode = code.trim();
   saveData(data);
   res.json({ ok: true });
 });
