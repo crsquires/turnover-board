@@ -345,6 +345,19 @@ app.post("/api/logs/:id", requireAnyAuth, (req, res) => {
     return res.status(403).json({ error: "This cleaning has already been submitted — ask your host to make changes." });
   }
 
+  if (submitted === true) {
+    const finalRating = rating !== undefined ? rating : current.rating;
+    const finalNotes = notes !== undefined ? notes : current.notes;
+    const finalInitials = initials !== undefined ? initials : current.initials;
+    const missing = [];
+    if (finalRating === null || finalRating === undefined) missing.push("a tidiness rating");
+    if (!finalNotes || !finalNotes.trim()) missing.push("notes");
+    if (!finalInitials || !finalInitials.trim()) missing.push("initials");
+    if (missing.length) {
+      return res.status(400).json({ error: "Please fill in " + missing.join(", ") + " before submitting." });
+    }
+  }
+
   const justCompleted = submitted === true && !current.submitted;
 
   data.logs[req.params.id][dateKey] = {
