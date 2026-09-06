@@ -12,34 +12,56 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
+app.get("/host", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
 // ---------- Data persistence (simple JSON file — fine for this scale) ----------
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    const initial = { accessCode: null, adminCode: null, properties: [], logs: {} };
+    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [] };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
     return initial;
   }
-  return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  if (!data.viewerSessions) data.viewerSessions = [];
+  if (!data.adminSessions) data.adminSessions = [];
+  return data;
 }
 
 function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-// ---------- Sessions (in-memory; fine for a single small server) ----------
+// Optional env-var override for the codes — lets the real host reset either
+// code from Render's dashboard (Environment tab) if it ever gets messed up,
+// without depending on already-broken in-app access. Set ACCESS_CODE and/or
+// ADMIN_CODE as environment variables and redeploy to force them.
+(function applyEnvCodeOverrides() {
+  const data = loadData();
+  let changed = false;
+  if (process.env.ACCESS_CODE && process.env.ACCESS_CODE !== data.accessCode) {
+    data.accessCode = process.env.ACCESS_CODE;
+    changed = true;
+  }
+  if (process.env.ADMIN_CODE && process.env.ADMIN_CODE !== data.adminCode) {
+    data.adminCode = process.env.ADMIN_CODE;
+    changed = true;
+  }
+  if (changed) saveData(data);
+})();
 
-const sessions = new Set();      // viewers (cleaners) — unlocked with the access code
-const adminSessions = new Set(); // host only — unlocked with the host password
+// ---------- Sessions (persisted to disk so they survive redeploys/restarts) ----------
 
 function requireAuthIfCodeSet(req, res, next) {
   const data = loadData();
   if (!data.accessCode) return next(); // no code set yet — open access
   const token = req.cookies.tb_session;
   const adminToken = req.cookies.tb_admin_session;
-  if (token && sessions.has(token)) return next();
-  if (adminToken && adminSessions.has(adminToken)) return next(); // host can always view too
+  if (token && data.viewerSessions.includes(token)) return next();
+  if (adminToken && data.adminSessions.includes(adminToken)) return next(); // host can always view too
   return res.status(401).json({ error: "Not authorized" });
 }
 
@@ -47,13 +69,14 @@ function requireAdmin(req, res, next) {
   const data = loadData();
   if (!data.adminCode) return res.status(401).json({ error: "Host password not set yet" });
   const token = req.cookies.tb_admin_session;
-  if (token && adminSessions.has(token)) return next();
+  if (token && data.adminSessions.includes(token)) return next();
   return res.status(401).json({ error: "Host login required" });
 }
 
 function isRequestAdmin(req) {
+  const data = loadData();
   const token = req.cookies.tb_admin_session;
-  return Boolean(token && adminSessions.has(token));
+  return Boolean(token && data.adminSessions.includes(token));
 }
 
 // ---------- ICS parsing (server-side — no CORS issue here) ----------
@@ -108,8 +131,9 @@ app.post("/api/login", (req, res) => {
   const { code } = req.body || {};
   if (!data.accessCode || (code && code.trim().toLowerCase() === data.accessCode.trim().toLowerCase())) {
     const token = crypto.randomBytes(24).toString("hex");
-    sessions.add(token);
-    res.cookie("tb_session", token, { httpOnly: true, sameSite: "lax", maxAge: 1000 * 60 * 60 * 24 * 90 });
+    data.viewerSessions.push(token);
+    saveData(data);
+    res.cookie("tb_session", token, { httpOnly: true, sameSite: "lax", maxAge: 1000 * 60 * 60 * 24 * 365 });
     return res.json({ ok: true, hasCode: !!data.accessCode });
   }
   return res.status(401).json({ ok: false, error: "Incorrect code" });
@@ -119,8 +143,8 @@ app.get("/api/session", (req, res) => {
   const data = loadData();
   const token = req.cookies.tb_session;
   const adminToken = req.cookies.tb_admin_session;
-  const authed = !data.accessCode || Boolean(token && sessions.has(token)) || Boolean(adminToken && adminSessions.has(adminToken));
-  const isAdmin = Boolean(adminToken && adminSessions.has(adminToken));
+  const authed = !data.accessCode || Boolean(token && data.viewerSessions.includes(token)) || Boolean(adminToken && data.adminSessions.includes(adminToken));
+  const isAdmin = Boolean(adminToken && data.adminSessions.includes(adminToken));
   res.json({ authed, hasCode: !!data.accessCode, hasAdminCode: !!data.adminCode, isAdmin });
 });
 
@@ -133,13 +157,13 @@ app.post("/api/admin-login", (req, res) => {
   if (!data.adminCode) {
     // Bootstrap: first password entered here becomes the permanent host password.
     data.adminCode = code.trim();
-    saveData(data);
   } else if (code.trim().toLowerCase() !== data.adminCode.trim().toLowerCase()) {
     return res.status(401).json({ ok: false, error: "Incorrect host password" });
   }
 
   const token = crypto.randomBytes(24).toString("hex");
-  adminSessions.add(token);
+  data.adminSessions.push(token);
+  saveData(data);
   res.cookie("tb_admin_session", token, { httpOnly: true, sameSite: "lax", maxAge: 1000 * 60 * 60 * 24 * 365 });
   res.json({ ok: true });
 });
