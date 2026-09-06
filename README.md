@@ -65,6 +65,12 @@ Since this behaves like an app once added to your home screen (via the manifest 
 
 Both logins have a "Stay logged in" checkbox — checked by default, it keeps you signed in for a year and survives app redeploys too (previously a redeploy would silently log everyone out). Uncheck it on a shared or public device to log out automatically when the browser closes.
 
+## Update notifications
+
+Whenever a new version of the app ships, anyone still running an older cached copy will see an amber banner at the top: *"An update is available"* — with instructions (force-close and reopen on iPhone, or just tap Refresh on Android). It's not a manual dismiss — the banner only disappears once that device is actually running the new version, so it can't be accidentally clicked away while still out of date.
+
+This works via a small `version.json` file the app checks periodically. Nothing you need to do — whenever this app gets updated for you, it comes with a matching version bump in both `version.json` and `index.html`.
+
 ## A couple of notes
 
 - Render's free tier "spins down" after 15 minutes of no traffic and takes ~30-50 seconds to wake back up on the next visit. If that's annoying, Render's cheapest paid tier ($7/mo) keeps it always-on — or Railway.app is a similar alternative.
