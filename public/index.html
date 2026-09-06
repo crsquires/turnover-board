@@ -58,6 +58,8 @@
   .tb-install-chevron-open { transform: rotate(90deg); }
   .tb-install-tip-steps { margin: 0 0 10px; padding-left: 18px; color: var(--ink-soft); }
   .tb-install-tip-steps li { margin-bottom: 2px; }
+  .tb-push-prompt { background: var(--cleaned-bg); border-radius: 12px; padding: 14px; margin-top: 4px; font-size: 13px; }
+  .tb-push-prompt-text { font-weight: 600; margin-bottom: 10px; color: var(--ink); }
   .tb-logout-link { display: block; margin: 18px auto 0; background: none; border: none; color: var(--ink-soft); font-size: 12.5px; text-decoration: underline; cursor: pointer; font-family: inherit; }
   .tb-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 14px 0 6px; margin-bottom: 4px; }
   .tb-tab {
@@ -156,6 +158,9 @@
     rememberMe: true,
     installTipOpen: false,
     addPropertyOpen: false,
+    showPushPrompt: false,
+    pushEnabling: false,
+    pushError: "",
     authed: false,
     hasCode: false,
     gateError: "",
@@ -175,6 +180,65 @@
 
   const isHostPage = () => state.roleChoice === "host";
   const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+
+  function base64UrlToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const rawData = atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+    return outputArray;
+  }
+
+  async function setupPush() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (!isStandalone()) return; // only offer once actually added to the home screen
+    try {
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      const existing = await reg.pushManager.getSubscription();
+      if (existing || Notification.permission === "denied") return;
+      state.showPushPrompt = true;
+      render();
+    } catch (e) {
+      // Notifications are a nice-to-have — fail silently rather than block the app.
+    }
+  }
+
+  async function enablePush() {
+    state.pushEnabling = true;
+    state.pushError = "";
+    render();
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        state.pushError = "Notifications were blocked — you can turn them on later in your phone's settings.";
+        state.pushEnabling = false;
+        state.showPushPrompt = false;
+        render();
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const { publicKey } = await api("/vapid-public-key");
+      if (!publicKey) {
+        state.pushError = "Notifications aren't set up on the server yet.";
+        state.pushEnabling = false;
+        render();
+        return;
+      }
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64UrlToUint8Array(publicKey),
+      });
+      await api("/push-subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
+      state.showPushPrompt = false;
+      state.pushEnabling = false;
+      render();
+    } catch (e) {
+      state.pushError = "Couldn't enable notifications — try again.";
+      state.pushEnabling = false;
+      render();
+    }
+  }
   function fmtMonth(d) { return d.toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
   function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
   function parseLocalDate(dateStr) {
@@ -512,6 +576,14 @@
         </div>
       ` : ""}
 
+      ${state.showPushPrompt ? `
+        <div class="tb-push-prompt">
+          <div class="tb-push-prompt-text">Get notified when a cleaning is added or completed.</div>
+          <div class="tb-gate-error">${state.pushError}</div>
+          <button class="tb-btn tb-btn-primary" id="tb-enable-push" ${state.pushEnabling ? "disabled" : ""}>${state.pushEnabling ? "Enabling…" : "Enable notifications"}</button>
+        </div>
+      ` : ""}
+
       ${showInstallTip ? `
         <div class="tb-install-tip">
           <button type="button" class="tb-install-toggle" id="tb-install-toggle">
@@ -534,6 +606,8 @@
     if (propertySelect) propertySelect.addEventListener("change", () => selectProperty(propertySelect.value));
     const installToggle = document.getElementById("tb-install-toggle");
     if (installToggle) installToggle.addEventListener("click", () => { state.installTipOpen = !state.installTipOpen; render(); });
+    const enablePushBtn = document.getElementById("tb-enable-push");
+    if (enablePushBtn) enablePushBtn.addEventListener("click", enablePush);
     const logoutLink = document.getElementById("tb-logout-link");
     if (logoutLink) logoutLink.addEventListener("click", async () => {
       await fetch("/api/logout", { method: "POST" });
@@ -642,6 +716,7 @@
     await refreshProperties();
     render();
     if (state.activeId) await selectProperty(state.activeId);
+    setupPush();
   }
 
   init();
