@@ -61,7 +61,6 @@
   .tb-push-prompt { background: var(--cleaned-bg); border-radius: 12px; padding: 14px; margin-top: 4px; font-size: 13px; }
   .tb-push-prompt-text { font-weight: 600; margin-bottom: 10px; color: var(--ink); }
   .tb-logout-link { display: block; margin: 18px auto 0; background: none; border: none; color: var(--ink-soft); font-size: 12.5px; text-decoration: underline; cursor: pointer; font-family: inherit; }
-  .tb-debug-line { font-size: 10.5px; color: var(--ink-soft); text-align: center; margin-top: 14px; word-break: break-word; opacity: 0.7; }
   .tb-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 14px 0 6px; margin-bottom: 4px; }
   .tb-tab {
     flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; border: 1.5px solid var(--line);
@@ -163,7 +162,6 @@
     showPushPrompt: false,
     pushEnabling: false,
     pushError: "",
-    pushDebug: "",
     authed: false,
     hasCode: false,
     gateError: "",
@@ -194,25 +192,18 @@
   }
 
   async function setupPush() {
-    const hasSW = "serviceWorker" in navigator;
-    const hasPM = "PushManager" in window;
-    const hasNotif = "Notification" in window;
-    const standalone = isStandalone();
-    state.pushDebug = `sw:${hasSW} pushManager:${hasPM} notification:${hasNotif} standalone:${standalone}`;
-    if (!hasSW || !hasPM) { render(); return; }
-    if (!standalone) { render(); return; }
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (!isStandalone()) return; // only offer once actually added to the home screen
     try {
       const reg = await navigator.serviceWorker.register("/sw.js");
       const existing = await reg.pushManager.getSubscription();
-      const perm = hasNotif ? Notification.permission : "n/a";
-      state.pushDebug += ` | swRegistered:yes existingSub:${!!existing} permission:${perm}`;
-      if (existing) { render(); return; }
-      if (hasNotif && Notification.permission === "denied") { render(); return; }
+      const hasNotif = "Notification" in window;
+      if (existing) return;
+      if (hasNotif && Notification.permission === "denied") return;
       state.showPushPrompt = true;
       render();
     } catch (e) {
-      state.pushDebug += ` | error:${e.message}`;
-      render();
+      // Notifications are a nice-to-have — fail silently rather than block the app.
     }
   }
 
@@ -612,8 +603,6 @@
       ` : ""}
 
       <button class="tb-logout-link" id="tb-logout-link">Log out</button>
-
-      ${state.pushDebug ? `<p class="tb-debug-line">Notification debug: ${escapeHtml(state.pushDebug)}</p>` : ""}
     `;
 
     const propertySelect = document.getElementById("tb-property-select");
