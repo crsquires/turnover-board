@@ -115,6 +115,7 @@
   .tb-done-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
   .tb-checkbox { width: 19px; height: 19px; accent-color: var(--turnover); cursor: pointer; }
   .tb-rating-label, .tb-notes-label { font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
+  .tb-required { color: var(--danger); font-weight: 700; }
   .tb-stars { display: flex; gap: 4px; }
   .tb-star { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--paper); font-size: 13px; font-weight: 700; color: var(--ink-soft); cursor: pointer; }
   .tb-star.active { background: var(--turnover); border-color: var(--turnover); color: #fff; }
@@ -523,17 +524,17 @@
               ` : ""}
             ` : `
               <div>
-                <div class="tb-rating-label">How clean were the guests?</div>
+                <div class="tb-rating-label">How clean were the guests? <span class="tb-required">*</span></div>
                 <div class="tb-stars">
                   ${[1,2,3,4,5].map(n => `<button type="button" class="tb-star ${selectedLog.rating === n ? "active" : ""}" data-rate="${n}">${n}</button>`).join("")}
                 </div>
               </div>
               <div>
-                <div class="tb-notes-label">Notes for the host — please list any supplies you're running low on</div>
+                <div class="tb-notes-label">Notes for the host — please list any supplies you're running low on <span class="tb-required">*</span></div>
                 <textarea class="tb-notes" id="tb-day-notes" placeholder="e.g. running low on paper towels, guests left extra mess in the kitchen…">${escapeHtml(selectedLog.notes)}</textarea>
               </div>
               <div>
-                <div class="tb-notes-label">Your initials</div>
+                <div class="tb-notes-label">Your initials <span class="tb-required">*</span></div>
                 <input class="tb-input" id="tb-day-initials" placeholder="e.g. JM" value="${escapeHtml(selectedLog.initials)}" maxlength="6" />
               </div>
               <div class="tb-gate-error">${state.formError}</div>
@@ -644,6 +645,17 @@
       const current = state.logs[dKey] || {};
       const notes = document.getElementById("tb-day-notes")?.value ?? current.notes ?? "";
       const initials = document.getElementById("tb-day-initials")?.value ?? current.initials ?? "";
+
+      const missing = [];
+      if (current.rating === null || current.rating === undefined) missing.push("a tidiness rating");
+      if (!notes.trim()) missing.push("notes");
+      if (!initials.trim()) missing.push("your initials");
+      if (missing.length) {
+        state.formError = "Please fill in " + missing.join(", ") + " before submitting.";
+        render();
+        return;
+      }
+
       try {
         await api("/logs/" + state.activeId, {
           method: "POST",
