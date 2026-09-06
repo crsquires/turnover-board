@@ -183,7 +183,7 @@
 <script>
 (function () {
   const root = document.getElementById("root");
-  const APP_VERSION = "2026-09-06T19:19:35Z";
+  const APP_VERSION = "2026-09-06T19:29:22Z";
   const updateBanner = document.getElementById("update-banner");
   let updateAvailable = false;
 
@@ -221,7 +221,7 @@
     installTipOpen: false,
     addPropertyOpen: false,
     expandedPropertyId: null,
-    monthlyReports: {},
+    monthlyReport: null,
     showPushPrompt: false,
     pushEnabling: false,
     pushError: "",
@@ -617,12 +617,32 @@
 
       ${isHostPage() && state.isAdmin ? `
         <div class="tb-card">
+          <p class="tb-section-title">Monthly Cleaning Report</p>
+          ${state.monthlyReport ? `
+            <p class="tb-report-title">${escapeHtml(state.monthlyReport.monthLabel)}</p>
+            <div class="tb-report-stats">
+              <div><span class="tb-report-num">${state.monthlyReport.avgRating !== null ? state.monthlyReport.avgRating : "—"}</span><span class="tb-report-label">avg. tidiness</span></div>
+              <div><span class="tb-report-num">${state.monthlyReport.totalCleanings}</span><span class="tb-report-label">cleanings</span></div>
+            </div>
+            ${state.monthlyReport.notes.length ? `
+              <div class="tb-report-notes">
+                ${state.monthlyReport.notes.map(n => `
+                  <div class="tb-report-note">
+                    <span class="tb-report-note-date">${escapeHtml(n.property)} · ${formatShortDate(n.date)}${n.initials ? " · " + escapeHtml(n.initials) : ""}</span>
+                    <span>${escapeHtml(n.notes)}</span>
+                  </div>
+                `).join("")}
+              </div>
+            ` : `<p class="tb-empty-state">No notes left last month.</p>`}
+          ` : `<p class="tb-empty-state">Loading report…</p>`}
+        </div>
+
+        <div class="tb-card">
           <p class="tb-section-title">Properties</p>
           ${state.properties.length ? `
             <div class="tb-existing-list">
               ${state.properties.map(p => {
                 const isExpanded = state.expandedPropertyId === p.id;
-                const report = state.monthlyReports[p.id];
                 return `
                 <div class="tb-property-row">
                   <button type="button" class="tb-existing-item tb-existing-toggle" data-toggle-property="${p.id}">
@@ -631,23 +651,6 @@
                   </button>
                   ${isExpanded ? `
                     <div class="tb-property-detail">
-                      ${report ? `
-                        <p class="tb-report-title">${escapeHtml(report.monthLabel)} report</p>
-                        <div class="tb-report-stats">
-                          <div><span class="tb-report-num">${report.avgRating !== null ? report.avgRating : "—"}</span><span class="tb-report-label">avg. tidiness</span></div>
-                          <div><span class="tb-report-num">${report.totalCleanings}</span><span class="tb-report-label">cleanings</span></div>
-                        </div>
-                        ${report.notes.length ? `
-                          <div class="tb-report-notes">
-                            ${report.notes.map(n => `
-                              <div class="tb-report-note">
-                                <span class="tb-report-note-date">${formatShortDate(n.date)}${n.initials ? " · " + escapeHtml(n.initials) : ""}</span>
-                                <span>${escapeHtml(n.notes)}</span>
-                              </div>
-                            `).join("")}
-                          </div>
-                        ` : `<p class="tb-empty-state">No notes left last month.</p>`}
-                      ` : `<p class="tb-empty-state">Loading report…</p>`}
                       <button class="tb-remove-btn" data-remove="${p.id}">Remove property</button>
                     </div>
                   ` : ""}
@@ -780,24 +783,10 @@
         render();
       }
     });
-    root.querySelectorAll("[data-toggle-property]").forEach(el => el.addEventListener("click", async () => {
+    root.querySelectorAll("[data-toggle-property]").forEach(el => el.addEventListener("click", () => {
       const id = el.getAttribute("data-toggle-property");
-      if (state.expandedPropertyId === id) {
-        state.expandedPropertyId = null;
-        render();
-        return;
-      }
-      state.expandedPropertyId = id;
+      state.expandedPropertyId = state.expandedPropertyId === id ? null : id;
       render();
-      if (!state.monthlyReports[id]) {
-        try {
-          state.monthlyReports[id] = await api("/monthly-report/" + id);
-          render();
-        } catch (e) {
-          state.expandedPropertyId = null;
-          render();
-        }
-      }
     }));
     const addPropertyToggle = document.getElementById("tb-add-property-toggle");
     if (addPropertyToggle) addPropertyToggle.addEventListener("click", () => { state.addPropertyOpen = !state.addPropertyOpen; render(); });
@@ -814,7 +803,6 @@
     root.querySelectorAll("[data-remove]").forEach(el => el.addEventListener("click", async () => {
       const id = el.getAttribute("data-remove");
       await api("/properties/" + id, { method: "DELETE" });
-      delete state.monthlyReports[id];
       if (state.expandedPropertyId === id) state.expandedPropertyId = null;
       await refreshProperties();
       if (state.activeId === id) state.activeId = state.properties[0]?.id || null;
@@ -843,6 +831,14 @@
     await refreshProperties();
     render();
     if (state.activeId) await selectProperty(state.activeId);
+    if (isHostPage() && state.isAdmin) {
+      try {
+        state.monthlyReport = await api("/monthly-report");
+        render();
+      } catch (e) {
+        // Report is a nice-to-have — don't block the rest of the page on it.
+      }
+    }
     setupPush();
   }
 
