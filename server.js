@@ -152,6 +152,22 @@ app.get("/api/session", (req, res) => {
   res.json({ authed, hasCode: !!data.accessCode, hasAdminCode: !!data.adminCode, isAdmin });
 });
 
+app.post("/api/logout", (req, res) => {
+  const data = loadData();
+  const token = req.cookies.tb_session;
+  const adminToken = req.cookies.tb_admin_session;
+  if (token) {
+    data.viewerSessions = data.viewerSessions.filter(t => t !== token);
+    res.clearCookie("tb_session");
+  }
+  if (adminToken) {
+    data.adminSessions = data.adminSessions.filter(t => t !== adminToken);
+    res.clearCookie("tb_admin_session");
+  }
+  saveData(data);
+  res.json({ ok: true });
+});
+
 // Host-only login. The host password must already be set via the ADMIN_CODE
 // environment variable (or previously through the admin panel) — there is no
 // in-app bootstrap, so a stranger reaching this page first can't claim it.
@@ -202,14 +218,6 @@ app.delete("/api/properties/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/access-code", requireAdmin, (req, res) => {
-  const data = loadData();
-  const { code } = req.body || {};
-  data.accessCode = code ? code.trim() : null;
-  saveData(data);
-  res.json({ ok: true });
-});
-
 // ---------- Calendar data ----------
 
 app.get("/api/calendar/:id", requireAnyAuth, async (req, res) => {
@@ -248,15 +256,6 @@ app.post("/api/logs/:id", requireAnyAuth, (req, res) => {
     initials: initials !== undefined ? initials : current.initials,
     submitted: submitted !== undefined ? submitted : current.submitted,
   };
-  saveData(data);
-  res.json({ ok: true });
-});
-
-app.post("/api/admin-code", requireAdmin, (req, res) => {
-  const data = loadData();
-  const { code } = req.body || {};
-  if (!code || !code.trim()) return res.status(400).json({ error: "New password required" });
-  data.adminCode = code.trim();
   saveData(data);
   res.json({ ok: true });
 });
