@@ -21,7 +21,7 @@ app.get("/host", (req, res) => {
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownCheckouts: {} };
+    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownCheckouts: {}, monthlyReport: null };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
     return initial;
@@ -31,7 +31,7 @@ function loadData() {
   if (!data.adminSessions) data.adminSessions = [];
   if (!data.pushSubscriptions) data.pushSubscriptions = [];
   if (!data.knownCheckouts) data.knownCheckouts = {};
-  if (!data.monthlyReports) data.monthlyReports = {};
+  if (!data.monthlyReport) data.monthlyReport = null;
   return data;
 }
 
@@ -115,35 +115,42 @@ function monthLabel(monthKey) {
 }
 
 // Builds (or returns the already-built) report for the most recently completed
-// month. Regenerating happens lazily, whenever someone asks for it after the
-// month has rolled over — no cron needed, and it naturally replaces last
-// month's report the first time anyone checks after the 1st.
-function getOrGenerateMonthlyReport(prop, data) {
+// month, combined across every property. Regenerating happens lazily, whenever
+// someone asks for it after the month has rolled over — no cron needed, and it
+// naturally replaces last month's report the first time anyone checks after
+// the 1st.
+function getOrGenerateMonthlyReport(data) {
   const expectedMonth = previousMonthKey();
-  const existing = data.monthlyReports[prop.id];
+  const existing = data.monthlyReport;
   if (existing && existing.forMonth === expectedMonth) return existing;
 
-  const logs = data.logs[prop.id] || {};
-  const entries = Object.entries(logs).filter(([dateKey, log]) => log.submitted && dateKey.startsWith(expectedMonth));
+  let allEntries = [];
+  for (const prop of data.properties) {
+    const logs = data.logs[prop.id] || {};
+    const entries = Object.entries(logs)
+      .filter(([dateKey, log]) => log.submitted && dateKey.startsWith(expectedMonth))
+      .map(([dateKey, log]) => ({ property: prop.name, date: dateKey, initials: log.initials || "", rating: log.rating, notes: log.notes }));
+    allEntries = allEntries.concat(entries);
+  }
 
-  const ratings = entries.map(([, log]) => log.rating).filter(r => r !== null && r !== undefined);
+  const ratings = allEntries.map(e => e.rating).filter(r => r !== null && r !== undefined);
   const avgRating = ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null;
 
-  const notes = entries
-    .filter(([, log]) => log.notes && log.notes.trim())
-    .map(([dateKey, log]) => ({ date: dateKey, initials: log.initials || "", notes: log.notes }))
+  const notes = allEntries
+    .filter(e => e.notes && e.notes.trim())
+    .map(e => ({ property: e.property, date: e.date, initials: e.initials, notes: e.notes }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const report = {
     forMonth: expectedMonth,
     monthLabel: monthLabel(expectedMonth),
     generatedAt: new Date().toISOString(),
-    totalCleanings: entries.length,
+    totalCleanings: allEntries.length,
     avgRating,
     notes,
   };
 
-  data.monthlyReports[prop.id] = report;
+  data.monthlyReport = report;
   saveData(data);
   return report;
 }
@@ -331,17 +338,14 @@ app.delete("/api/properties/:id", requireAdmin, (req, res) => {
   data.properties = data.properties.filter(p => p.id !== req.params.id);
   delete data.logs[req.params.id];
   delete data.knownCheckouts[req.params.id];
-  delete data.monthlyReports[req.params.id];
   saveData(data);
   icsCache.delete(req.params.id);
   res.json({ ok: true });
 });
 
-app.get("/api/monthly-report/:id", requireAdmin, (req, res) => {
+app.get("/api/monthly-report", requireAdmin, (req, res) => {
   const data = loadData();
-  const prop = data.properties.find(p => p.id === req.params.id);
-  if (!prop) return res.status(404).json({ error: "not found" });
-  res.json(getOrGenerateMonthlyReport(prop, data));
+  res.json(getOrGenerateMonthlyReport(data));
 });
 
 // ---------- Push notifications ----------
