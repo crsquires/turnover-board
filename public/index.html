@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Turnover board</title>
+<style>
+  :root {
+    --paper: #F5F6F3;
+    --ink: #1F2A2E;
+    --ink-soft: #5B6A6C;
+    --line: #D9DED9;
+    --booked: #B9C9C4;
+    --booked-text: #33474A;
+    --turnover: #C98A2C;
+    --turnover-bg: #FBEDD8;
+    --panel: #FFFFFF;
+    --danger: #B24B3C;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Libre Franklin", "Inter", system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    margin: 0;
+  }
+  #root {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 18px 16px 40px;
+  }
+  .tb-header { margin-bottom: 14px; }
+  .tb-title { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 2px; }
+  .tb-sub { font-size: 13.5px; color: var(--ink-soft); margin: 0; }
+  .tb-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 14px 0 6px; margin-bottom: 4px; }
+  .tb-tab {
+    flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; border: 1.5px solid var(--line);
+    background: var(--panel); font-size: 14px; font-weight: 600; color: var(--ink-soft); cursor: pointer; white-space: nowrap;
+  }
+  .tb-tab.active { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+  .tb-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+  .tb-month-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .tb-month-label { font-size: 16px; font-weight: 700; }
+  .tb-nav-btn {
+    width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--paper);
+    font-size: 15px; line-height: 1; cursor: pointer; color: var(--ink);
+  }
+  .tb-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .tb-dow { font-size: 11px; font-weight: 700; color: var(--ink-soft); text-align: center; padding-bottom: 4px; }
+  .tb-day { position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 13px; border-radius: 8px; color: var(--ink); border: none; background: none; font-family: inherit; padding: 0; }
+  .tb-day.tb-turnover { cursor: pointer; }
+  .tb-day.tb-empty { visibility: hidden; }
+  .tb-day.tb-booked { background: var(--booked); color: var(--booked-text); font-weight: 600; }
+  .tb-day.tb-turnover { background: var(--turnover); color: #fff; font-weight: 800; }
+  .tb-day.tb-today::after { content: ""; position: absolute; bottom: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--danger); }
+  .tb-legend { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--ink-soft); }
+  .tb-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .tb-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .tb-section-title { font-size: 14px; font-weight: 700; margin: 0 0 10px; }
+  .tb-clean-item { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .tb-clean-item:first-child { border-top: none; padding-top: 0; }
+  .tb-clean-top { display: flex; align-items: flex-start; justify-content: space-between; border: none; background: none; padding: 0; width: 100%; cursor: pointer; font-family: inherit; text-align: left; }
+  .tb-clean-date { font-weight: 700; font-size: 14.5px; }
+  .tb-clean-when { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
+  .tb-clean-tag { font-size: 11.5px; font-weight: 700; color: var(--turnover); background: var(--turnover-bg); padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+  .tb-past-tag { color: var(--danger); background: #F6E4DF; }
+  .tb-clean-item.tb-done .tb-clean-date { color: var(--ink-soft); }
+  .tb-empty-state { font-size: 13.5px; color: var(--ink-soft); padding: 6px 0; }
+  .tb-status { font-size: 12.5px; color: var(--ink-soft); margin-top: 10px; }
+  .tb-status.tb-error { color: var(--danger); }
+  .tb-done-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+  .tb-checkbox { width: 19px; height: 19px; accent-color: var(--turnover); cursor: pointer; }
+  .tb-rating-label, .tb-notes-label { font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
+  .tb-stars { display: flex; gap: 4px; }
+  .tb-star { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--paper); font-size: 13px; font-weight: 700; color: var(--ink-soft); cursor: pointer; }
+  .tb-star.active { background: var(--turnover); border-color: var(--turnover); color: #fff; }
+  .tb-notes { width: 100%; min-height: 54px; padding: 8px 10px; border-radius: 8px; border: 1.5px solid var(--line); font-size: 13.5px; font-family: inherit; background: var(--paper); color: var(--ink); resize: vertical; }
+  .tb-notes:focus, .tb-input:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .tb-manage-toggle { font-size: 13px; font-weight: 600; color: var(--ink-soft); background: none; border: none; padding: 4px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .tb-field-label { display: block; font-size: 12.5px; font-weight: 700; margin-bottom: 4px; margin-top: 12px; }
+  .tb-field-label:first-child { margin-top: 0; }
+  .tb-input { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1.5px solid var(--line); font-size: 14px; font-family: inherit; background: var(--paper); color: var(--ink); }
+  .tb-row-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .tb-btn { flex: 1; padding: 10px; border-radius: 9px; border: none; font-size: 13.5px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  .tb-btn-primary { background: var(--ink); color: var(--paper); }
+  .tb-btn-secondary { background: var(--paper); color: var(--danger); border: 1.5px solid var(--line); }
+  .tb-existing-list { margin-top: 14px; }
+  .tb-existing-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .tb-existing-item:first-child { border-top: none; }
+  .tb-remove-btn { background: none; border: none; color: var(--danger); font-size: 12px; font-weight: 700; cursor: pointer; }
+  .tb-gate { min-height: 70vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
+  .tb-gate-title { font-size: 19px; font-weight: 800; margin: 0 0 6px; }
+  .tb-gate-sub { font-size: 13.5px; color: var(--ink-soft); margin: 0 0 18px; }
+  .tb-gate-input { width: 100%; max-width: 220px; text-align: center; letter-spacing: 0.1em; font-size: 18px; padding: 12px 10px; border-radius: 10px; border: 1.5px solid var(--line); font-family: inherit; background: var(--panel); color: var(--ink); margin-bottom: 12px; }
+  .tb-gate-error { font-size: 12.5px; color: var(--danger); margin-bottom: 10px; min-height: 16px; }
+  .tb-gate-btn { padding: 11px 24px; border-radius: 9px; border: none; background: var(--ink); color: var(--paper); font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+(function () {
+  const root = document.getElementById("root");
+
+  let state = {
+    authed: false,
+    hasCode: false,
+    gateError: "",
+    isAdmin: false,
+    hasAdminCode: false,
+    adminError: "",
+    showAdminLogin: false,
+    properties: [],
+    activeId: null,
+    events: [],
+    logs: {},
+    calendarStatus: "",
+    calendarError: false,
+    viewMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    manageOpen: false,
+    expandedDate: null,
+  };
+
+  function fmtMonth(d) { return d.toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
+  function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+  function parseLocalDate(dateStr) {
+    // dateStr is "YYYY-MM-DD" — construct as a local date, not UTC, to avoid timezone shifting.
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+  function dateKey(d) {
+    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), da = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${da}`;
+  }
+  function relativeLabel(date) {
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const diff = Math.round((date - now) / 86400000);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Tomorrow";
+    if (diff > 1 && diff < 7) return date.toLocaleDateString(undefined, { weekday: "long" });
+    return date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  }
+  function relativeSync(ts) {
+    if (!ts) return "Not synced yet";
+    const diffMin = Math.round((Date.now() - ts) / 60000);
+    if (diffMin < 1) return "Updated just now";
+    if (diffMin < 60) return "Updated " + diffMin + " min ago";
+    const diffHr = Math.round(diffMin / 60);
+    return "Updated " + diffHr + "h ago";
+  }
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str || "";
+    return div.innerHTML;
+  }
+
+  async function api(path, opts) {
+    const res = await fetch("/api" + path, {
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      ...opts,
+    });
+    if (res.status === 401) {
+      const body = await res.json().catch(() => ({}));
+      if (path.startsWith("/properties") || path.startsWith("/access-code")) {
+        // Admin-only action rejected — host needs to log in again, viewer stays logged in.
+        state.isAdmin = false;
+        state.adminError = body.error || "Host login required";
+        render();
+      } else {
+        state.authed = false;
+        render();
+      }
+      throw new Error(body.error || "unauthorized");
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || ("HTTP " + res.status));
+    }
+    return res.json();
+  }
+
+  function activeProperty() { return state.properties.find(p => p.id === state.activeId) || null; }
+
+  function buildCalendarCells(monthDate, events) {
+    const year = monthDate.getFullYear(), month = monthDate.getMonth();
+    const firstDow = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(year, month, d);
+      let booked = false, turnover = false;
+      for (const ev of events) {
+        const s = parseLocalDate(ev.start), e = parseLocalDate(ev.end);
+        if (date >= s && date < e) booked = true;
+        if (sameDay(date, e)) turnover = true;
+      }
+      cells.push({ date, booked, turnover });
+    }
+    return cells;
+  }
+
+  function upcomingCleanings(events) {
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const past = new Date(now); past.setDate(past.getDate() - 14);
+    return events.map(ev => parseLocalDate(ev.end)).filter(d => d >= past).sort((a, b) => a - b).slice(0, 12);
+  }
+
+  async function selectProperty(id) {
+    state.activeId = id;
+    state.expandedDate = null;
+    state.calendarStatus = "Loading…";
+    state.calendarError = false;
+    render();
+    try {
+      const [cal, logs] = await Promise.all([api("/calendar/" + id), api("/logs/" + id)]);
+      state.events = cal.events;
+      state.logs = logs;
+      state.calendarStatus = relativeSync(cal.updatedAt);
+      state.calendarError = false;
+    } catch (e) {
+      state.calendarStatus = "Couldn't load this calendar (" + e.message + ")";
+      state.calendarError = true;
+    }
+    render();
+  }
+
+  async function refreshProperties() {
+    state.properties = await api("/properties");
+    if (!state.activeId && state.properties.length) state.activeId = state.properties[0].id;
+  }
+
+  function render() {
+    if (!state.authed) {
+      root.innerHTML = `
+        <div class="tb-gate">
+          <p class="tb-gate-title">Turnover board</p>
+          <p class="tb-gate-sub">${state.hasCode ? "Enter the code your host gave you." : "Set an access code to get started."}</p>
+          <input class="tb-gate-input" id="tb-gate-input" placeholder="Code" autocomplete="off" />
+          <div class="tb-gate-error">${state.gateError}</div>
+          <button class="tb-gate-btn" id="tb-unlock">Continue</button>
+        </div>
+      `;
+      const input = document.getElementById("tb-gate-input");
+      const tryLogin = async () => {
+        try {
+          const result = await fetch("/api/login", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: input.value.trim() }),
+          }).then(r => r.json());
+          if (result.ok) { state.authed = true; await init(); }
+          else { state.gateError = result.error || "Incorrect code"; render(); }
+        } catch (e) { state.gateError = "Something went wrong"; render(); }
+      };
+      document.getElementById("tb-unlock").addEventListener("click", tryLogin);
+      input.addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
+      input.focus();
+      return;
+    }
+
+    const prop = activeProperty();
+    const cells = prop ? buildCalendarCells(state.viewMonth, state.events) : [];
+    const cleanings = prop ? upcomingCleanings(state.events) : [];
+    const today = new Date();
+
+    root.innerHTML = `
+      <div class="tb-header">
+        <p class="tb-title">Turnover board</p>
+        <p class="tb-sub">Checkout dates, cleaning check-off, guest tidiness rating, and notes — synced from Airbnb automatically.</p>
+      </div>
+
+      ${state.properties.length ? `
+        <div class="tb-tabs">
+          ${state.properties.map(p => `<button class="tb-tab ${p.id === state.activeId ? "active" : ""}" data-select="${p.id}">${escapeHtml(p.name)}</button>`).join("")}
+        </div>
+      ` : ""}
+
+      ${!state.properties.length ? `
+        <div class="tb-card"><p class="tb-empty-state">No properties yet. Add one below with its Airbnb export link.</p></div>
+      ` : prop ? `
+        <div class="tb-card">
+          <div class="tb-month-row">
+            <button class="tb-nav-btn" data-nav="-1">‹</button>
+            <span class="tb-month-label">${fmtMonth(state.viewMonth)}</span>
+            <button class="tb-nav-btn" data-nav="1">›</button>
+          </div>
+          <div class="tb-grid">
+            ${["S","M","T","W","T","F","S"].map(d => `<div class="tb-dow">${d}</div>`).join("")}
+            ${cells.map(c => {
+              if (!c) return `<div class="tb-day tb-empty"></div>`;
+              const cls = ["tb-day"];
+              if (c.turnover) cls.push("tb-turnover"); else if (c.booked) cls.push("tb-booked");
+              if (sameDay(c.date, today)) cls.push("tb-today");
+              if (c.turnover) {
+                return `<button type="button" class="${cls.join(" ")}" data-day-select="${dateKey(c.date)}">${c.date.getDate()}</button>`;
+              }
+              return `<div class="${cls.join(" ")}">${c.date.getDate()}</div>`;
+            }).join("")}
+          </div>
+          <div class="tb-legend">
+            <span><span class="tb-dot" style="background:var(--booked)"></span>Guest staying</span>
+            <span><span class="tb-dot" style="background:var(--turnover)"></span>Checkout / clean</span>
+          </div>
+          <div class="tb-status ${state.calendarError ? "tb-error" : ""}">${state.calendarStatus}</div>
+        </div>
+
+        <div class="tb-card">
+          <p class="tb-section-title">Cleanings</p>
+          ${cleanings.length ? cleanings.map(d => {
+            const dKey = dateKey(d);
+            const log = state.logs[dKey] || { done: false, rating: null, notes: "" };
+            const isPast = d < new Date(new Date().setHours(0,0,0,0));
+            const isExpanded = state.expandedDate === dKey;
+            return `
+            <div class="tb-clean-item ${log.done ? "tb-done" : ""}" id="clean-${dKey}">
+              <button type="button" class="tb-clean-top" data-toggle-date="${dKey}">
+                <div>
+                  <div class="tb-clean-date">${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</div>
+                  <div class="tb-clean-when">${d.toLocaleDateString(undefined, { weekday: "long" })}</div>
+                </div>
+                <span class="tb-clean-tag ${isPast && !log.done ? "tb-past-tag" : ""}">${log.done ? "Cleaned" : relativeLabel(d)}</span>
+              </button>
+              ${isExpanded ? `
+                <label class="tb-done-row">
+                  <input type="checkbox" class="tb-checkbox" data-done="${dKey}" ${log.done ? "checked" : ""} /> Cleaning finished
+                </label>
+                <div>
+                  <div class="tb-rating-label">How clean were the guests?</div>
+                  <div class="tb-stars">
+                    ${[1,2,3,4,5].map(n => `<button type="button" class="tb-star ${log.rating === n ? "active" : ""}" data-rate="${dKey}|${n}">${n}</button>`).join("")}
+                  </div>
+                </div>
+                <div>
+                  <div class="tb-notes-label">Notes for the host</div>
+                  <textarea class="tb-notes" placeholder="Anything the host should know…" data-notes="${dKey}">${escapeHtml(log.notes)}</textarea>
+                </div>
+              ` : ""}
+            </div>
+          `;
+          }).join("") : `<p class="tb-empty-state">No checkouts scheduled yet.</p>`}
+        </div>
+      ` : ""}
+
+      <button class="tb-manage-toggle" id="tb-manage-toggle">${state.manageOpen ? "Hide setup" : "Manage properties"}</button>
+
+      ${state.manageOpen && !state.isAdmin ? `
+        <div class="tb-card">
+          <p class="tb-section-title">${state.hasAdminCode ? "Host login" : "Set your host password"}</p>
+          <p class="tb-empty-state">${state.hasAdminCode ? "Only you should know this — it's separate from the code you give cleaners." : "This is separate from the cleaner access code. Only you should know it — set it now."}</p>
+          <input class="tb-input" id="tb-admin-input" type="password" placeholder="Host password" />
+          <div class="tb-gate-error">${state.adminError}</div>
+          <div class="tb-row-actions">
+            <button class="tb-btn tb-btn-primary" id="tb-admin-submit">${state.hasAdminCode ? "Log in" : "Set password"}</button>
+          </div>
+        </div>
+      ` : ""}
+
+      ${state.manageOpen && state.isAdmin ? `
+        <div class="tb-card">
+          <label class="tb-field-label">Access code for cleaners</label>
+          <input class="tb-input" id="tb-code-input" placeholder="e.g. blue42" />
+          <div class="tb-row-actions">
+            <button class="tb-btn tb-btn-primary" id="tb-save-code">Save code</button>
+          </div>
+
+          <label class="tb-field-label">Property name</label>
+          <input class="tb-input" id="tb-new-name" placeholder="e.g. Lake House" />
+          <label class="tb-field-label">Airbnb calendar link (iCal export URL)</label>
+          <input class="tb-input" id="tb-new-url" placeholder="https://www.airbnb.com/calendar/ical/..." />
+          <div class="tb-row-actions">
+            <button class="tb-btn tb-btn-primary" id="tb-add-property">Add property</button>
+          </div>
+
+          ${state.properties.length ? `
+            <div class="tb-existing-list">
+              ${state.properties.map(p => `
+                <div class="tb-existing-item">
+                  <span>${escapeHtml(p.name)}</span>
+                  <button class="tb-remove-btn" data-remove="${p.id}">Remove</button>
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
+        </div>
+      ` : ""}
+    `;
+
+    root.querySelectorAll("[data-select]").forEach(el => el.addEventListener("click", () => selectProperty(el.getAttribute("data-select"))));
+    root.querySelectorAll("[data-day-select]").forEach(el => el.addEventListener("click", () => {
+      const dKey = el.getAttribute("data-day-select");
+      state.expandedDate = state.expandedDate === dKey ? null : dKey;
+      render();
+      const target = document.getElementById("clean-" + dKey);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }));
+    root.querySelectorAll("[data-toggle-date]").forEach(el => el.addEventListener("click", () => {
+      const dKey = el.getAttribute("data-toggle-date");
+      state.expandedDate = state.expandedDate === dKey ? null : dKey;
+      render();
+    }));
+    root.querySelectorAll("[data-nav]").forEach(el => el.addEventListener("click", () => {
+      const delta = parseInt(el.getAttribute("data-nav"), 10);
+      state.viewMonth = new Date(state.viewMonth.getFullYear(), state.viewMonth.getMonth() + delta, 1);
+      render();
+    }));
+    root.querySelectorAll("[data-done]").forEach(el => el.addEventListener("change", async () => {
+      const dKey = el.getAttribute("data-done");
+      state.logs[dKey] = { ...(state.logs[dKey] || {}), done: el.checked };
+      render();
+      await api("/logs/" + state.activeId, { method: "POST", body: JSON.stringify({ dateKey: dKey, done: el.checked }) });
+    }));
+    root.querySelectorAll("[data-rate]").forEach(el => el.addEventListener("click", async () => {
+      const [dKey, n] = el.getAttribute("data-rate").split("|");
+      const current = state.logs[dKey] || {};
+      const nextRating = current.rating === parseInt(n, 10) ? null : parseInt(n, 10);
+      state.logs[dKey] = { ...current, rating: nextRating };
+      render();
+      await api("/logs/" + state.activeId, { method: "POST", body: JSON.stringify({ dateKey: dKey, rating: nextRating }) });
+    }));
+    root.querySelectorAll("[data-notes]").forEach(el => el.addEventListener("blur", async () => {
+      const dKey = el.getAttribute("data-notes");
+      await api("/logs/" + state.activeId, { method: "POST", body: JSON.stringify({ dateKey: dKey, notes: el.value }) });
+    }));
+    const manageToggle = document.getElementById("tb-manage-toggle");
+    if (manageToggle) manageToggle.addEventListener("click", () => { state.manageOpen = !state.manageOpen; render(); });
+    const adminSubmit = document.getElementById("tb-admin-submit");
+    if (adminSubmit) adminSubmit.addEventListener("click", async () => {
+      const val = document.getElementById("tb-admin-input").value;
+      try {
+        const result = await fetch("/api/admin-login", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: val }),
+        }).then(r => r.json());
+        if (result.ok) {
+          state.isAdmin = true;
+          state.hasAdminCode = true;
+          state.adminError = "";
+          render();
+        } else {
+          state.adminError = result.error || "Something went wrong";
+          render();
+        }
+      } catch (e) {
+        state.adminError = "Something went wrong";
+        render();
+      }
+    });
+    const saveCodeBtn = document.getElementById("tb-save-code");
+    if (saveCodeBtn) saveCodeBtn.addEventListener("click", async () => {
+      const val = document.getElementById("tb-code-input").value.trim();
+      await api("/access-code", { method: "POST", body: JSON.stringify({ code: val || null }) });
+      state.hasCode = !!val;
+      render();
+    });
+    const addBtn = document.getElementById("tb-add-property");
+    if (addBtn) addBtn.addEventListener("click", async () => {
+      const name = document.getElementById("tb-new-name").value.trim();
+      const url = document.getElementById("tb-new-url").value.trim();
+      if (!name || !url) return;
+      const created = await api("/properties", { method: "POST", body: JSON.stringify({ name, icalUrl: url }) });
+      await refreshProperties();
+      await selectProperty(created.id);
+    });
+    root.querySelectorAll("[data-remove]").forEach(el => el.addEventListener("click", async () => {
+      const id = el.getAttribute("data-remove");
+      await api("/properties/" + id, { method: "DELETE" });
+      await refreshProperties();
+      if (state.activeId === id) state.activeId = state.properties[0]?.id || null;
+      if (state.activeId) await selectProperty(state.activeId); else render();
+    }));
+  }
+
+  async function init() {
+    const session = await fetch("/api/session").then(r => r.json());
+    state.authed = session.authed;
+    state.hasCode = session.hasCode;
+    state.isAdmin = session.isAdmin;
+    state.hasAdminCode = session.hasAdminCode;
+    if (!state.authed) { render(); return; }
+    await refreshProperties();
+    render();
+    if (state.activeId) await selectProperty(state.activeId);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
