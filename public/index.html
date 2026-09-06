@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Turnover board</title>
+<title>Turnover Board</title>
 <style>
   :root {
     --paper: #F5F6F3;
@@ -14,6 +14,8 @@
     --booked-text: #33474A;
     --turnover: #C98A2C;
     --turnover-bg: #FBEDD8;
+    --cleaned: #3E8E63;
+    --cleaned-bg: #E1F0E7;
     --panel: #FFFFFF;
     --danger: #B24B3C;
   }
@@ -52,7 +54,17 @@
   .tb-day.tb-empty { visibility: hidden; }
   .tb-day.tb-booked { background: var(--booked); color: var(--booked-text); font-weight: 600; }
   .tb-day.tb-turnover { background: var(--turnover); color: #fff; font-weight: 800; }
+  .tb-day.tb-cleaned { background: var(--cleaned-bg); border: 1.5px solid var(--cleaned); color: var(--cleaned); }
+  .tb-day.tb-overdue { box-shadow: 0 0 0 2px var(--danger) inset; }
+  .tb-day.tb-selected { outline: 2px solid var(--ink); outline-offset: 2px; }
   .tb-day.tb-today::after { content: ""; position: absolute; bottom: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--danger); }
+  .tb-day-num { position: relative; z-index: 1; }
+  .tb-day.tb-cleaned .tb-day-num { font-size: 10px; opacity: 0.55; position: absolute; top: 2px; left: 4px; }
+  .tb-stamp {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 6.5px; font-weight: 800; letter-spacing: 0.02em; color: var(--cleaned);
+    transform: rotate(-14deg); text-align: center; line-height: 1;
+  }
   .tb-legend { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--ink-soft); }
   .tb-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .tb-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
@@ -60,11 +72,16 @@
   .tb-clean-item { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
   .tb-clean-item:first-child { border-top: none; padding-top: 0; }
   .tb-clean-top { display: flex; align-items: flex-start; justify-content: space-between; border: none; background: none; padding: 0; width: 100%; cursor: pointer; font-family: inherit; text-align: left; }
+  .tb-clean-top-static { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
   .tb-clean-date { font-weight: 700; font-size: 14.5px; }
   .tb-clean-when { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
   .tb-clean-tag { font-size: 11.5px; font-weight: 700; color: var(--turnover); background: var(--turnover-bg); padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
   .tb-past-tag { color: var(--danger); background: #F6E4DF; }
-  .tb-clean-item.tb-done .tb-clean-date { color: var(--ink-soft); }
+  .tb-cleaned-tag { color: var(--cleaned); background: var(--cleaned-bg); }
+  .tb-locked-note { font-size: 13px; color: var(--cleaned); background: var(--cleaned-bg); padding: 8px 10px; border-radius: 8px; margin-bottom: 12px; }
+  .tb-readonly-block { margin-bottom: 12px; }
+  .tb-readonly-notes { font-size: 13.5px; color: var(--ink); background: var(--paper); border: 1.5px solid var(--line); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; }
+  .tb-star-static { display: inline-flex; align-items: center; justify-content: center; cursor: default; }
   .tb-empty-state { font-size: 13.5px; color: var(--ink-soft); padding: 6px 0; }
   .tb-status { font-size: 12.5px; color: var(--ink-soft); margin-top: 10px; }
   .tb-status.tb-error { color: var(--danger); }
@@ -118,7 +135,8 @@
     calendarError: false,
     viewMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     manageOpen: false,
-    expandedDate: null,
+    selectedDate: null,
+    formError: "",
   };
 
   function fmtMonth(d) { return d.toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
@@ -162,7 +180,7 @@
     });
     if (res.status === 401) {
       const body = await res.json().catch(() => ({}));
-      if (path.startsWith("/properties") || path.startsWith("/access-code")) {
+      if (path.startsWith("/properties") || path.startsWith("/access-code") || path.startsWith("/admin-code")) {
         // Admin-only action rejected — host needs to log in again, viewer stays logged in.
         state.isAdmin = false;
         state.adminError = body.error || "Host login required";
@@ -201,15 +219,9 @@
     return cells;
   }
 
-  function upcomingCleanings(events) {
-    const now = new Date(); now.setHours(0, 0, 0, 0);
-    const past = new Date(now); past.setDate(past.getDate() - 14);
-    return events.map(ev => parseLocalDate(ev.end)).filter(d => d >= past).sort((a, b) => a - b).slice(0, 12);
-  }
-
   async function selectProperty(id) {
     state.activeId = id;
-    state.expandedDate = null;
+    state.selectedDate = null;
     state.calendarStatus = "Loading…";
     state.calendarError = false;
     render();
@@ -235,7 +247,7 @@
     if (!state.authed) {
       root.innerHTML = `
         <div class="tb-gate">
-          <p class="tb-gate-title">Turnover board</p>
+          <p class="tb-gate-title">Turnover Board</p>
           <p class="tb-gate-sub">${state.hasCode ? "Enter the code your host gave you." : "Set an access code to get started."}</p>
           <input class="tb-gate-input" id="tb-gate-input" placeholder="Code" autocomplete="off" />
           <div class="tb-gate-error">${state.gateError}</div>
@@ -261,13 +273,16 @@
 
     const prop = activeProperty();
     const cells = prop ? buildCalendarCells(state.viewMonth, state.events) : [];
-    const cleanings = prop ? upcomingCleanings(state.events) : [];
     const today = new Date();
+    const selectedLog = (prop && state.selectedDate) ? (state.logs[state.selectedDate] || { rating: null, notes: "", initials: "", submitted: false }) : null;
+    const selectedDateObj = state.selectedDate ? parseLocalDate(state.selectedDate) : null;
+    const selectedIsPast = selectedDateObj && selectedDateObj < new Date(new Date().setHours(0,0,0,0));
+    const canEditSelected = selectedLog && (!selectedLog.submitted || state.isAdmin);
 
     root.innerHTML = `
       <div class="tb-header">
-        <p class="tb-title">Turnover board</p>
-        <p class="tb-sub">Checkout dates, cleaning check-off, guest tidiness rating, and notes — synced from Airbnb automatically.</p>
+        <p class="tb-title">Turnover Board</p>
+        <p class="tb-sub">Tap a checkout day below to log the cleaning.</p>
       </div>
 
       ${state.properties.length ? `
@@ -277,7 +292,7 @@
       ` : ""}
 
       ${!state.properties.length ? `
-        <div class="tb-card"><p class="tb-empty-state">No properties yet. Add one below with its Airbnb export link.</p></div>
+        <div class="tb-card"><p class="tb-empty-state">No properties yet.${state.isAdmin ? " Add one below with its Airbnb export link." : " Ask your host to set one up."}</p></div>
       ` : prop ? `
         <div class="tb-card">
           <div class="tb-month-row">
@@ -290,59 +305,81 @@
             ${cells.map(c => {
               if (!c) return `<div class="tb-day tb-empty"></div>`;
               const cls = ["tb-day"];
+              const cKey = dateKey(c.date);
+              const cLog = state.logs[cKey];
+              const isCleaned = cLog && cLog.submitted;
+              const isOverdue = c.turnover && !isCleaned && c.date < new Date(new Date().setHours(0,0,0,0));
               if (c.turnover) cls.push("tb-turnover"); else if (c.booked) cls.push("tb-booked");
+              if (isCleaned) cls.push("tb-cleaned");
+              if (isOverdue) cls.push("tb-overdue");
               if (sameDay(c.date, today)) cls.push("tb-today");
+              if (state.selectedDate === cKey) cls.push("tb-selected");
               if (c.turnover) {
-                return `<button type="button" class="${cls.join(" ")}" data-day-select="${dateKey(c.date)}">${c.date.getDate()}</button>`;
+                return `<button type="button" class="${cls.join(" ")}" data-day-select="${cKey}">
+                  ${isCleaned ? `<span class="tb-stamp">CLEANED</span>` : ""}
+                  <span class="tb-day-num">${c.date.getDate()}</span>
+                </button>`;
               }
               return `<div class="${cls.join(" ")}">${c.date.getDate()}</div>`;
             }).join("")}
           </div>
           <div class="tb-legend">
             <span><span class="tb-dot" style="background:var(--booked)"></span>Guest staying</span>
-            <span><span class="tb-dot" style="background:var(--turnover)"></span>Checkout / clean</span>
+            <span><span class="tb-dot" style="background:var(--turnover)"></span>Needs cleaning</span>
+            <span><span class="tb-dot" style="background:var(--cleaned)"></span>Cleaned</span>
           </div>
           <div class="tb-status ${state.calendarError ? "tb-error" : ""}">${state.calendarStatus}</div>
         </div>
 
-        <div class="tb-card">
-          <p class="tb-section-title">Cleanings</p>
-          ${cleanings.length ? cleanings.map(d => {
-            const dKey = dateKey(d);
-            const log = state.logs[dKey] || { done: false, rating: null, notes: "" };
-            const isPast = d < new Date(new Date().setHours(0,0,0,0));
-            const isExpanded = state.expandedDate === dKey;
-            return `
-            <div class="tb-clean-item ${log.done ? "tb-done" : ""}" id="clean-${dKey}">
-              <button type="button" class="tb-clean-top" data-toggle-date="${dKey}">
-                <div>
-                  <div class="tb-clean-date">${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</div>
-                  <div class="tb-clean-when">${d.toLocaleDateString(undefined, { weekday: "long" })}</div>
+        ${selectedLog ? `
+          <div class="tb-card" id="day-detail">
+            <div class="tb-clean-top-static">
+              <div>
+                <div class="tb-clean-date">${selectedDateObj.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</div>
+                <div class="tb-clean-when">${selectedDateObj.toLocaleDateString(undefined, { weekday: "long" })}</div>
+              </div>
+              <span class="tb-clean-tag ${selectedLog.submitted ? "tb-cleaned-tag" : (selectedIsPast ? "tb-past-tag" : "")}">${selectedLog.submitted ? "Cleaned" : relativeLabel(selectedDateObj)}</span>
+            </div>
+
+            ${!canEditSelected ? `
+              <div class="tb-locked-note">Submitted${selectedLog.initials ? " by " + escapeHtml(selectedLog.initials) : ""} — only the host can make changes.</div>
+              <div class="tb-readonly-block">
+                <div class="tb-rating-label">Guest tidiness</div>
+                <div class="tb-stars">
+                  ${[1,2,3,4,5].map(n => `<span class="tb-star tb-star-static ${selectedLog.rating === n ? "active" : ""}">${n}</span>`).join("")}
                 </div>
-                <span class="tb-clean-tag ${isPast && !log.done ? "tb-past-tag" : ""}">${log.done ? "Cleaned" : relativeLabel(d)}</span>
-              </button>
-              ${isExpanded ? `
-                <label class="tb-done-row">
-                  <input type="checkbox" class="tb-checkbox" data-done="${dKey}" ${log.done ? "checked" : ""} /> Cleaning finished
-                </label>
-                <div>
-                  <div class="tb-rating-label">How clean were the guests?</div>
-                  <div class="tb-stars">
-                    ${[1,2,3,4,5].map(n => `<button type="button" class="tb-star ${log.rating === n ? "active" : ""}" data-rate="${dKey}|${n}">${n}</button>`).join("")}
-                  </div>
-                </div>
-                <div>
-                  <div class="tb-notes-label">Notes for the host</div>
-                  <textarea class="tb-notes" placeholder="Anything the host should know…" data-notes="${dKey}">${escapeHtml(log.notes)}</textarea>
+              </div>
+              ${selectedLog.notes ? `
+                <div class="tb-readonly-block">
+                  <div class="tb-notes-label">Notes</div>
+                  <div class="tb-readonly-notes">${escapeHtml(selectedLog.notes)}</div>
                 </div>
               ` : ""}
-            </div>
-          `;
-          }).join("") : `<p class="tb-empty-state">No checkouts scheduled yet.</p>`}
-        </div>
+            ` : `
+              <div>
+                <div class="tb-rating-label">How clean were the guests?</div>
+                <div class="tb-stars">
+                  ${[1,2,3,4,5].map(n => `<button type="button" class="tb-star ${selectedLog.rating === n ? "active" : ""}" data-rate="${n}">${n}</button>`).join("")}
+                </div>
+              </div>
+              <div>
+                <div class="tb-notes-label">Notes for the host — please list any supplies you're running low on</div>
+                <textarea class="tb-notes" id="tb-day-notes" placeholder="e.g. running low on paper towels, guests left extra mess in the kitchen…">${escapeHtml(selectedLog.notes)}</textarea>
+              </div>
+              <div>
+                <div class="tb-notes-label">Your initials</div>
+                <input class="tb-input" id="tb-day-initials" placeholder="e.g. JM" value="${escapeHtml(selectedLog.initials)}" maxlength="6" />
+              </div>
+              <div class="tb-gate-error">${state.formError}</div>
+              <div class="tb-row-actions">
+                <button class="tb-btn tb-btn-primary" id="tb-submit-cleaning">${selectedLog.submitted ? "Save changes" : "Submit cleaning"}</button>
+              </div>
+            `}
+          </div>
+        ` : ""}
       ` : ""}
 
-      <button class="tb-manage-toggle" id="tb-manage-toggle">${state.manageOpen ? "Hide setup" : "Manage properties"}</button>
+      <button class="tb-manage-toggle" id="tb-manage-toggle">${state.isAdmin ? (state.manageOpen ? "Hide setup" : "Manage properties") : (state.manageOpen ? "Hide" : "Host login")}</button>
 
       ${state.manageOpen && !state.isAdmin ? `
         <div class="tb-card">
@@ -362,6 +399,12 @@
           <input class="tb-input" id="tb-code-input" placeholder="e.g. blue42" />
           <div class="tb-row-actions">
             <button class="tb-btn tb-btn-primary" id="tb-save-code">Save code</button>
+          </div>
+
+          <label class="tb-field-label">Change host password</label>
+          <input class="tb-input" id="tb-admin-code-input" type="password" placeholder="New host password" />
+          <div class="tb-row-actions">
+            <button class="tb-btn tb-btn-primary" id="tb-save-admin-code">Update password</button>
           </div>
 
           <label class="tb-field-label">Property name</label>
@@ -389,39 +432,42 @@
     root.querySelectorAll("[data-select]").forEach(el => el.addEventListener("click", () => selectProperty(el.getAttribute("data-select"))));
     root.querySelectorAll("[data-day-select]").forEach(el => el.addEventListener("click", () => {
       const dKey = el.getAttribute("data-day-select");
-      state.expandedDate = state.expandedDate === dKey ? null : dKey;
+      state.selectedDate = state.selectedDate === dKey ? null : dKey;
+      state.formError = "";
       render();
-      const target = document.getElementById("clean-" + dKey);
+      const target = document.getElementById("day-detail");
       if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
-    }));
-    root.querySelectorAll("[data-toggle-date]").forEach(el => el.addEventListener("click", () => {
-      const dKey = el.getAttribute("data-toggle-date");
-      state.expandedDate = state.expandedDate === dKey ? null : dKey;
-      render();
     }));
     root.querySelectorAll("[data-nav]").forEach(el => el.addEventListener("click", () => {
       const delta = parseInt(el.getAttribute("data-nav"), 10);
       state.viewMonth = new Date(state.viewMonth.getFullYear(), state.viewMonth.getMonth() + delta, 1);
       render();
     }));
-    root.querySelectorAll("[data-done]").forEach(el => el.addEventListener("change", async () => {
-      const dKey = el.getAttribute("data-done");
-      state.logs[dKey] = { ...(state.logs[dKey] || {}), done: el.checked };
+    root.querySelectorAll("[data-rate]").forEach(el => el.addEventListener("click", () => {
+      const n = parseInt(el.getAttribute("data-rate"), 10);
+      const current = state.logs[state.selectedDate] || {};
+      state.logs[state.selectedDate] = { ...current, rating: current.rating === n ? null : n };
       render();
-      await api("/logs/" + state.activeId, { method: "POST", body: JSON.stringify({ dateKey: dKey, done: el.checked }) });
     }));
-    root.querySelectorAll("[data-rate]").forEach(el => el.addEventListener("click", async () => {
-      const [dKey, n] = el.getAttribute("data-rate").split("|");
+    const submitBtn = document.getElementById("tb-submit-cleaning");
+    if (submitBtn) submitBtn.addEventListener("click", async () => {
+      const dKey = state.selectedDate;
       const current = state.logs[dKey] || {};
-      const nextRating = current.rating === parseInt(n, 10) ? null : parseInt(n, 10);
-      state.logs[dKey] = { ...current, rating: nextRating };
-      render();
-      await api("/logs/" + state.activeId, { method: "POST", body: JSON.stringify({ dateKey: dKey, rating: nextRating }) });
-    }));
-    root.querySelectorAll("[data-notes]").forEach(el => el.addEventListener("blur", async () => {
-      const dKey = el.getAttribute("data-notes");
-      await api("/logs/" + state.activeId, { method: "POST", body: JSON.stringify({ dateKey: dKey, notes: el.value }) });
-    }));
+      const notes = document.getElementById("tb-day-notes")?.value ?? current.notes ?? "";
+      const initials = document.getElementById("tb-day-initials")?.value ?? current.initials ?? "";
+      try {
+        await api("/logs/" + state.activeId, {
+          method: "POST",
+          body: JSON.stringify({ dateKey: dKey, rating: current.rating, notes, initials, submitted: true }),
+        });
+        state.logs[dKey] = { ...current, notes, initials, submitted: true };
+        state.formError = "";
+        render();
+      } catch (e) {
+        state.formError = e.message || "Couldn't save — try again.";
+        render();
+      }
+    });
     const manageToggle = document.getElementById("tb-manage-toggle");
     if (manageToggle) manageToggle.addEventListener("click", () => { state.manageOpen = !state.manageOpen; render(); });
     const adminSubmit = document.getElementById("tb-admin-submit");
@@ -450,6 +496,14 @@
       const val = document.getElementById("tb-code-input").value.trim();
       await api("/access-code", { method: "POST", body: JSON.stringify({ code: val || null }) });
       state.hasCode = !!val;
+      render();
+    });
+    const saveAdminCodeBtn = document.getElementById("tb-save-admin-code");
+    if (saveAdminCodeBtn) saveAdminCodeBtn.addEventListener("click", async () => {
+      const val = document.getElementById("tb-admin-code-input").value.trim();
+      if (!val) return;
+      await api("/admin-code", { method: "POST", body: JSON.stringify({ code: val }) });
+      document.getElementById("tb-admin-code-input").value = "";
       render();
     });
     const addBtn = document.getElementById("tb-add-property");
