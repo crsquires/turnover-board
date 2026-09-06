@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Turnover Board</title>
 <link rel="manifest" href="/manifest.json" />
-<link rel="icon" type="image/png" href="/icons/logo.png" />
-<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
-<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
-<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="/logo.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 <meta name="theme-color" content="#1F2A2E" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -271,7 +271,7 @@
     if (state.isHostPage && !state.isAdmin) {
       root.innerHTML = `
         <div class="tb-gate">
-          <img src="/icons/logo.png" alt="" style="width:56px;height:56px;border-radius:14px;margin-bottom:14px;" />
+          <img src="/logo.png" alt="" style="width:56px;height:56px;border-radius:14px;margin-bottom:14px;" />
           <p class="tb-gate-title">${state.hasAdminCode ? "Host login" : "Set your host password"}</p>
           <p class="tb-gate-sub">${state.hasAdminCode ? "Enter your host password to manage properties." : "This is separate from the cleaner access code — set it now."}</p>
           <input class="tb-gate-input" id="tb-gate-input" type="password" placeholder="Host password" autocomplete="off" />
@@ -299,7 +299,7 @@
     if (!state.isHostPage && !state.authed) {
       root.innerHTML = `
         <div class="tb-gate">
-          <img src="/icons/logo.png" alt="" style="width:56px;height:56px;border-radius:14px;margin-bottom:14px;" />
+          <img src="/logo.png" alt="" style="width:56px;height:56px;border-radius:14px;margin-bottom:14px;" />
           <p class="tb-gate-title">Turnover Board</p>
           <p class="tb-gate-sub">${state.hasCode ? "Enter the code your host gave you." : "Ask your host for the access code."}</p>
           <input class="tb-gate-input" id="tb-gate-input" placeholder="Code" autocomplete="off" />
@@ -335,7 +335,7 @@
 
     root.innerHTML = `
       <div class="tb-header">
-        <img src="/icons/logo.png" alt="" class="tb-logo" />
+        <img src="/logo.png" alt="" class="tb-logo" />
         <div class="tb-header-text">
           <p class="tb-title">Turnover Board${state.isHostPage ? " — Host" : ""}</p>
           <p class="tb-sub">${state.isHostPage ? "Manage properties and codes." : "Tap a checkout day below to log the cleaning."}</p>
