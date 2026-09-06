@@ -3,6 +3,7 @@ const cookieParser = require("cookie-parser");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const webpush = require("web-push");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,7 +21,7 @@ app.get("/host", (req, res) => {
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [] };
+    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownCheckouts: {} };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
     return initial;
@@ -28,6 +29,8 @@ function loadData() {
   const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
   if (!data.viewerSessions) data.viewerSessions = [];
   if (!data.adminSessions) data.adminSessions = [];
+  if (!data.pushSubscriptions) data.pushSubscriptions = [];
+  if (!data.knownCheckouts) data.knownCheckouts = {};
   return data;
 }
 
@@ -53,7 +56,48 @@ function saveData(data) {
   if (changed) saveData(data);
 })();
 
-// ---------- Sessions (persisted to disk so they survive redeploys/restarts) ----------
+// ---------- Web Push setup ----------
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:admin@example.com";
+const pushEnabled = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+
+if (pushEnabled) {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.log("Push notifications disabled — set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable them.");
+}
+
+async function sendPushToAll(title, body) {
+  if (!pushEnabled) return;
+  const data = loadData();
+  if (!data.pushSubscriptions.length) return;
+  const payload = JSON.stringify({ title, body });
+  const stillValid = [];
+  await Promise.all(data.pushSubscriptions.map(async (sub) => {
+    try {
+      await webpush.sendNotification(sub, payload);
+      stillValid.push(sub);
+    } catch (e) {
+      // 404/410 means the subscription is gone (uninstalled, permissions revoked, etc.) — drop it.
+      if (e.statusCode !== 404 && e.statusCode !== 410) stillValid.push(sub);
+    }
+  }));
+  if (stillValid.length !== data.pushSubscriptions.length) {
+    const fresh = loadData();
+    fresh.pushSubscriptions = stillValid;
+    saveData(fresh);
+  }
+}
+
+function formatDateForNotification(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+
 
 function requireAnyAuth(req, res, next) {
   const data = loadData();
@@ -120,7 +164,29 @@ async function getEventsForProperty(prop) {
   if (!text.includes("BEGIN:VCALENDAR")) throw new Error("Response wasn't a calendar file");
   const events = parseICS(text);
   icsCache.set(prop.id, { events, fetchedAt: Date.now() });
+  await checkForNewCheckouts(prop, events);
   return { events, updatedAt: Date.now() };
+}
+
+// Compares freshly fetched checkout dates against what we've seen before for
+// this property, and pushes a notification for any genuinely new ones. The
+// very first fetch for a property just records the baseline — it doesn't
+// notify for the whole existing calendar.
+async function checkForNewCheckouts(prop, events) {
+  const checkoutDates = [...new Set(events.map(ev => ev.end))].sort();
+  const data = loadData();
+  const known = data.knownCheckouts[prop.id];
+
+  if (known) {
+    const knownSet = new Set(known);
+    const newDates = checkoutDates.filter(d => !knownSet.has(d));
+    for (const dateStr of newDates) {
+      await sendPushToAll("New cleaning added", `${prop.name} — ${formatDateForNotification(dateStr)}`);
+    }
+  }
+
+  data.knownCheckouts[prop.id] = checkoutDates;
+  saveData(data);
 }
 
 // ---------- Auth routes ----------
@@ -213,8 +279,37 @@ app.delete("/api/properties/:id", requireAdmin, (req, res) => {
   const data = loadData();
   data.properties = data.properties.filter(p => p.id !== req.params.id);
   delete data.logs[req.params.id];
+  delete data.knownCheckouts[req.params.id];
   saveData(data);
   icsCache.delete(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- Push notifications ----------
+
+app.get("/api/vapid-public-key", requireAnyAuth, (req, res) => {
+  res.json({ publicKey: pushEnabled ? VAPID_PUBLIC_KEY : null });
+});
+
+app.post("/api/push-subscribe", requireAnyAuth, (req, res) => {
+  if (!pushEnabled) return res.status(503).json({ error: "Push notifications aren't configured on this server." });
+  const subscription = req.body;
+  if (!subscription || !subscription.endpoint) return res.status(400).json({ error: "Invalid subscription" });
+  const data = loadData();
+  const exists = data.pushSubscriptions.some(s => s.endpoint === subscription.endpoint);
+  if (!exists) {
+    data.pushSubscriptions.push(subscription);
+    saveData(data);
+  }
+  res.json({ ok: true });
+});
+
+app.post("/api/push-unsubscribe", requireAnyAuth, (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) return res.status(400).json({ error: "endpoint required" });
+  const data = loadData();
+  data.pushSubscriptions = data.pushSubscriptions.filter(s => s.endpoint !== endpoint);
+  saveData(data);
   res.json({ ok: true });
 });
 
@@ -250,6 +345,8 @@ app.post("/api/logs/:id", requireAnyAuth, (req, res) => {
     return res.status(403).json({ error: "This cleaning has already been submitted — ask your host to make changes." });
   }
 
+  const justCompleted = submitted === true && !current.submitted;
+
   data.logs[req.params.id][dateKey] = {
     rating: rating !== undefined ? rating : current.rating,
     notes: notes !== undefined ? notes : current.notes,
@@ -258,6 +355,11 @@ app.post("/api/logs/:id", requireAnyAuth, (req, res) => {
   };
   saveData(data);
   res.json({ ok: true });
+
+  if (justCompleted) {
+    const prop = data.properties.find(p => p.id === req.params.id);
+    if (prop) sendPushToAll("Cleaning completed", `${prop.name} — ${formatDateForNotification(dateKey)}`);
+  }
 });
 
 app.listen(PORT, () => {
