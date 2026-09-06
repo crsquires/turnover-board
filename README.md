@@ -1,8 +1,9 @@
 # Turnover Board
 
 A shared cleaning schedule for your Airbnb properties. Fetches checkout dates
-straight from Airbnb automatically (no pasting), and lets cleaners check off
-finished jobs, rate guest tidiness (1-5), and leave notes for the host.
+straight from Airbnb automatically (no pasting), lets cleaners check off
+finished jobs, rate guest tidiness (1-5), and leave notes for the host — and
+can send push notifications when a cleaning is added or completed.
 
 ## Deploying (Render — free tier works)
 
@@ -34,13 +35,26 @@ Both the cleaner access code and the host password must be set **from Render's d
    (Airbnb host dashboard → Calendar → that listing → Availability → Sync calendars → **Export calendar**).
 5. Share the plain `/` link and the `ACCESS_CODE` with your cleaners. Keep the host password to yourself (and any other host who needs it).
 
-Both codes can also be changed later from inside the host panel (Manage properties → access code / host password) without touching Render — the environment variables are just how you set them the first time, or force-reset them if needed.
+Both codes can only be changed by updating these environment variables and redeploying — there's no in-app way to change them anymore, on purpose, so a cleaner (or a compromised cleaner device) can never touch either credential.
 
 The calendar refreshes from Airbnb automatically (checked every ~10 minutes when someone opens the page) — no more manual updates or texting each change.
 
+## Push notifications (optional but recommended)
+
+Once someone adds the app to their phone's home screen, they can turn on push notifications — a bell-style alert when a new cleaning is added to the calendar, or when a cleaning gets marked done. Each notification names the property and the date.
+
+This needs one more set of environment variables — a VAPID key pair, which is just how push notifications authenticate your server to Apple/Google's push services. Use this pair (already generated for you):
+
+- `VAPID_PUBLIC_KEY` = `BIJHpRWW6tiTzfEYubz0dfwlbLVU4S_5EEtnIj7SsuNE0UJo2mpgIcakGEAWkdbsLAVKYOl58OGLXCpzKUq4pJQ`
+- `VAPID_PRIVATE_KEY` = `Hg-UNLiO3pYxGUB-__uoqQGql2wL38IOWc-SEX_-DH4`
+
+Add both in Render's **Environment** tab the same way as `ACCESS_CODE` and `ADMIN_CODE`, then redeploy. If you skip this, the app still works fine — people just won't see the "Enable notifications" prompt.
+
+Once it's set up: open the app on a phone, add it to the home screen, open it from the home screen icon (not the browser), and a small "Enable notifications" prompt appears near the bottom — tapping it asks for permission and turns notifications on for that device.
+
 ## If a code ever gets messed up
 
-If another host accidentally changes the access code or password and you get locked out, you can force-reset either one from Render itself, without needing to already be logged in — same `ACCESS_CODE` / `ADMIN_CODE` environment variables as above. Update the value and redeploy; the app applies it on startup, overriding whatever was there before.
+If the access code or host password ever gets lost or you get locked out, update the `ACCESS_CODE` / `ADMIN_CODE` environment variables in Render and redeploy — the app applies whatever you set there on startup, overriding whatever was there before.
 
 ## Quick access for your phone
 
