@@ -165,6 +165,9 @@
   .tb-report-notes { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
   .tb-report-note { font-size: 12.5px; background: var(--paper); border-radius: 8px; padding: 8px 10px; }
   .tb-report-note-date { display: block; font-size: 11px; font-weight: 700; color: var(--ink-soft); margin-bottom: 2px; }
+  .tb-report-missed { background: #F6E4DF; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+  .tb-report-missed-title { font-size: 13px; font-weight: 700; color: var(--danger); margin-bottom: 6px; }
+  .tb-report-missed-item { font-size: 12.5px; color: var(--ink); padding: 2px 0; }
   .tb-remove-btn { background: none; border: none; color: var(--danger); font-size: 12px; font-weight: 700; cursor: pointer; }
   .tb-add-property-toggle { width: 100%; padding: 10px; border-radius: 9px; border: 1.5px dashed var(--line); background: var(--paper); color: var(--ink); font-size: 13.5px; font-weight: 700; cursor: pointer; font-family: inherit; margin-top: 12px; }
   .tb-gate { min-height: 70vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
@@ -186,7 +189,7 @@
 <script>
 (function () {
   const root = document.getElementById("root");
-  const APP_VERSION = "2026-09-06T19:44:51Z";
+  const APP_VERSION = "2026-09-07T01:44:57Z";
   const updateBanner = document.getElementById("update-banner");
   let updateAvailable = false;
 
@@ -615,7 +618,9 @@
                 if (state.selectedDate === cKey) cls.push("tb-selected");
                 if (!c.propsToday.length) return `<div class="${cls.join(" ")}">${c.date.getDate()}</div>`;
                 const allCleaned = c.propsToday.every(p => ((state.logsByProperty[p.id] || {})[cKey] || {}).submitted);
+                const isPastDay = c.date < new Date(new Date().setHours(0,0,0,0));
                 cls.push(allCleaned ? "tb-cleaned" : "tb-turnover-multi");
+                if (!allCleaned && isPastDay) cls.push("tb-overdue");
                 return `<button type="button" class="${cls.join(" ")}" data-day-select="${cKey}">
                   <span class="tb-day-num">${c.date.getDate()}</span>
                   <span class="tb-day-dots">${c.propsToday.slice(0, 4).map(p => `<span class="tb-color-dot" style="background:${p.color}"></span>`).join("")}</span>
@@ -725,8 +730,16 @@
             <p class="tb-report-title">${escapeHtml(state.monthlyReport.monthLabel)}</p>
             <div class="tb-report-stats">
               <div><span class="tb-report-num">${state.monthlyReport.avgRating !== null ? state.monthlyReport.avgRating : "—"}</span><span class="tb-report-label">avg. tidiness</span></div>
-              <div><span class="tb-report-num">${state.monthlyReport.totalCleanings}</span><span class="tb-report-label">cleanings</span></div>
+              <div><span class="tb-report-num">${state.monthlyReport.totalCleanings} / ${state.monthlyReport.totalBookings}</span><span class="tb-report-label">cleanings completed</span></div>
             </div>
+            ${state.monthlyReport.missed.length ? `
+              <div class="tb-report-missed">
+                <div class="tb-report-missed-title">⚠ ${state.monthlyReport.missed.length} missed cleaning${state.monthlyReport.missed.length > 1 ? "s" : ""}</div>
+                ${state.monthlyReport.missed.map(m => `
+                  <div class="tb-report-missed-item">${escapeHtml(m.property)} · ${formatShortDate(m.date)}</div>
+                `).join("")}
+              </div>
+            ` : (state.monthlyReport.totalBookings > 0 ? `<p class="tb-empty-state">All cleanings were completed. ✓</p>` : "")}
             ${state.monthlyReport.notes.length ? `
               <div class="tb-report-notes">
                 ${state.monthlyReport.notes.map(n => `
