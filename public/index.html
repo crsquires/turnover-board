@@ -189,7 +189,7 @@
 <script>
 (function () {
   const root = document.getElementById("root");
-  const APP_VERSION = "2026-09-07T19:30:49Z";
+  const APP_VERSION = "2026-09-07T19:36:23Z";
   const updateBanner = document.getElementById("update-banner");
   let updateAvailable = false;
 
@@ -962,7 +962,17 @@
     if (state.activeId) await selectProperty(state.activeId);
     if (isHostPage() && state.isAdmin) {
       try {
-        state.monthlyReport = await api("/monthly-report");
+        const report = await api("/monthly-report");
+        // Normalize defensively — guards against a stale/older-shaped report
+        // object ever crashing the render, regardless of what sent it.
+        state.monthlyReport = {
+          monthLabel: report.monthLabel || "",
+          avgRating: report.avgRating ?? null,
+          totalCleanings: report.totalCleanings || 0,
+          totalBookings: report.totalBookings || 0,
+          missed: Array.isArray(report.missed) ? report.missed : [],
+          notes: Array.isArray(report.notes) ? report.notes : [],
+        };
         render();
       } catch (e) {
         // Report is a nice-to-have — don't block the rest of the page on it.
