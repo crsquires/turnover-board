@@ -41,7 +41,7 @@ The calendar refreshes from Airbnb automatically (checked every ~10 minutes when
 
 ## Push notifications (optional but recommended)
 
-Once someone adds the app to their phone's home screen, they can turn on push notifications — a bell-style alert when a new cleaning is added to the calendar, or when a cleaning gets marked done. Each notification names the property and the date.
+Once someone adds the app to their phone's home screen, they can turn on push notifications — an alert when a new cleaning is added, when one gets marked done, when a checkout date changes or is cancelled, and if a cleaning still isn't marked done by **2:00 PM Central** on the day it's due. Each notification names the property and the date.
 
 This needs one more set of environment variables — a VAPID key pair, which is just how push notifications authenticate your server to Apple/Google's push services. Use this pair (already generated for you):
 
