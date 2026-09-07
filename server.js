@@ -176,7 +176,13 @@ function monthLabel(monthKey) {
 function getOrGenerateMonthlyReport(data) {
   const expectedMonth = previousMonthKey();
   const existing = data.monthlyReport;
-  if (existing && existing.forMonth === expectedMonth) return existing;
+  // Only reuse a cached report if it's for the right month AND has the shape
+  // the current code expects — an older app version may have saved one
+  // missing newer fields, which would otherwise get served forever until the
+  // next month rolls over.
+  if (existing && existing.forMonth === expectedMonth && Array.isArray(existing.missed) && typeof existing.totalBookings === "number") {
+    return existing;
+  }
 
   let allEntries = [];
   let totalBookings = 0;
