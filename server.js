@@ -21,7 +21,7 @@ app.get("/host", (req, res) => {
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownReservations: {}, monthlyReport: null };
+    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownReservations: {}, reservationHistory: {}, monthlyReport: null };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
     return initial;
@@ -31,6 +31,7 @@ function loadData() {
   if (!data.adminSessions) data.adminSessions = [];
   if (!data.pushSubscriptions) data.pushSubscriptions = [];
   if (!data.knownReservations) data.knownReservations = {};
+  if (!data.reservationHistory) data.reservationHistory = {};
   if (!data.monthlyReport) data.monthlyReport = null;
   return data;
 }
@@ -125,13 +126,30 @@ function getOrGenerateMonthlyReport(data) {
   if (existing && existing.forMonth === expectedMonth) return existing;
 
   let allEntries = [];
+  let totalBookings = 0;
+  const missed = [];
+
   for (const prop of data.properties) {
     const logs = data.logs[prop.id] || {};
     const entries = Object.entries(logs)
       .filter(([dateKey, log]) => log.submitted && dateKey.startsWith(expectedMonth))
       .map(([dateKey, log]) => ({ property: prop.name, date: dateKey, initials: log.initials || "", rating: log.rating, notes: log.notes }));
     allEntries = allEntries.concat(entries);
+
+    const history = data.reservationHistory[prop.id] || {};
+    const monthCheckouts = Object.values(history)
+      .map(r => r.end)
+      .filter(end => end.startsWith(expectedMonth));
+    totalBookings += monthCheckouts.length;
+
+    for (const checkoutDate of monthCheckouts) {
+      if (!(logs[checkoutDate] && logs[checkoutDate].submitted)) {
+        missed.push({ property: prop.name, date: checkoutDate });
+      }
+    }
   }
+
+  missed.sort((a, b) => a.date.localeCompare(b.date));
 
   const ratings = allEntries.map(e => e.rating).filter(r => r !== null && r !== undefined);
   const avgRating = ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null;
@@ -146,6 +164,8 @@ function getOrGenerateMonthlyReport(data) {
     monthLabel: monthLabel(expectedMonth),
     generatedAt: new Date().toISOString(),
     totalCleanings: allEntries.length,
+    totalBookings,
+    missed,
     avgRating,
     notes,
   };
@@ -248,10 +268,13 @@ async function checkForCalendarChanges(prop, events) {
   const known = data.knownReservations[prop.id];
   const current = {};
   for (const ev of events) current[ev.uid] = { start: ev.start, end: ev.end };
+  if (!data.reservationHistory[prop.id]) data.reservationHistory[prop.id] = {};
+  const history = data.reservationHistory[prop.id];
 
   if (known) {
     const knownUids = Object.keys(known);
     const currentUids = Object.keys(current);
+    const todayKey = new Date().toISOString().slice(0, 10);
 
     for (const uid of currentUids) {
       if (!known[uid]) {
@@ -262,13 +285,27 @@ async function checkForCalendarChanges(prop, events) {
           `${prop.name} — moved from ${formatDateForNotification(known[uid].end)} to ${formatDateForNotification(current[uid].end)}`
         );
       }
+      // Keep a permanent record of every checkout we've ever seen, so reports
+      // stay accurate even after Airbnb's feed later drops a completed stay.
+      history[uid] = { end: current[uid].end };
     }
 
     for (const uid of knownUids) {
       if (!current[uid]) {
-        await sendPushToAll("Cleaning cancelled", `${prop.name} — ${formatDateForNotification(known[uid].end)} is no longer needed`);
+        // A missing reservation only means a real cancellation if its checkout
+        // hadn't already happened — otherwise it's just Airbnb's feed quietly
+        // dropping a completed stay, which looks identical from here but isn't
+        // actually news.
+        if (known[uid].end >= todayKey) {
+          await sendPushToAll("Cleaning cancelled", `${prop.name} — ${formatDateForNotification(known[uid].end)} is no longer needed`);
+          delete history[uid]; // genuinely cancelled — it never happened, don't count it
+        }
       }
     }
+  } else {
+    // First-ever fetch for this property — just record the baseline history,
+    // no notifications (see checkForCalendarChanges doc above).
+    for (const uid of Object.keys(current)) history[uid] = { end: current[uid].end };
   }
 
   data.knownReservations[prop.id] = current;
@@ -379,6 +416,7 @@ app.delete("/api/properties/:id", requireAdmin, (req, res) => {
   data.properties = data.properties.filter(p => p.id !== req.params.id);
   delete data.logs[req.params.id];
   delete data.knownReservations[req.params.id];
+  delete data.reservationHistory[req.params.id];
   saveData(data);
   icsCache.delete(req.params.id);
   res.json({ ok: true });
