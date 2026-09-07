@@ -21,7 +21,7 @@ app.get("/host", (req, res) => {
 
 function loadData() {
   if (!fs.existsSync(DATA_FILE)) {
-    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownReservations: {}, reservationHistory: {}, monthlyReport: null };
+    const initial = { accessCode: null, adminCode: null, properties: [], logs: {}, viewerSessions: [], adminSessions: [], pushSubscriptions: [], knownReservations: {}, reservationHistory: {}, overdueNotified: {}, monthlyReport: null };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2));
     return initial;
@@ -32,6 +32,7 @@ function loadData() {
   if (!data.pushSubscriptions) data.pushSubscriptions = [];
   if (!data.knownReservations) data.knownReservations = {};
   if (!data.reservationHistory) data.reservationHistory = {};
+  if (!data.overdueNotified) data.overdueNotified = {};
   if (!data.monthlyReport) data.monthlyReport = null;
   return data;
 }
@@ -92,6 +93,58 @@ async function sendPushToAll(title, body) {
     saveData(fresh);
   }
 }
+
+// ---------- 2pm Central "cleaning overdue" check ----------
+
+function getCentralDateKey() {
+  // en-CA gives YYYY-MM-DD directly, in whatever timezone we ask for.
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+function getCentralHour() {
+  let hour = parseInt(new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", hour12: false }).format(new Date()), 10);
+  if (hour === 24) hour = 0; // some environments render midnight as "24" instead of "0"
+  return hour;
+}
+
+async function checkOverdueCleanings() {
+  if (getCentralHour() < 14) return; // not 2pm Central yet
+  const todayKey = getCentralDateKey();
+
+  // Refresh every property's calendar first (each call handles its own
+  // load/save internally for reservation tracking) so we're working with
+  // current data, not something stale from hours ago.
+  const properties = loadData().properties;
+  const eventsByProp = {};
+  for (const prop of properties) {
+    try {
+      const { events } = await getEventsForProperty(prop);
+      eventsByProp[prop.id] = events;
+    } catch (e) {
+      eventsByProp[prop.id] = null; // couldn't reach this one this round — skip it
+    }
+  }
+
+  // Now decide what to notify and persist, in one fresh read-modify-write so
+  // we don't clobber anything the fetch loop above just saved.
+  const data = loadData();
+  let changed = false;
+  for (const prop of data.properties) {
+    const events = eventsByProp[prop.id];
+    if (!events || !events.some(ev => ev.end === todayKey)) continue;
+    const logs = data.logs[prop.id] || {};
+    if (logs[todayKey] && logs[todayKey].submitted) continue; // already done
+    if (!data.overdueNotified[prop.id]) data.overdueNotified[prop.id] = {};
+    if (data.overdueNotified[prop.id][todayKey]) continue; // already alerted today
+    await sendPushToAll("Cleaning overdue", `${prop.name} — today's cleaning hasn't been marked done yet`);
+    data.overdueNotified[prop.id][todayKey] = true;
+    changed = true;
+  }
+  if (changed) saveData(data);
+}
+
+setInterval(() => { checkOverdueCleanings().catch(() => {}); }, 15 * 60 * 1000);
+setTimeout(() => { checkOverdueCleanings().catch(() => {}); }, 5000);
 
 function formatDateForNotification(dateStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
